@@ -61,12 +61,12 @@ export function TaskField() {
                 taskId,
                 mediaType: 'photo',
                 sequenceNumber: nextSequence,
+                contentType: 'image/jpeg',
                 directionDegrees: compass.headingDegrees ?? undefined,
                 latitude: geolocation.latitude,
                 longitude: geolocation.longitude,
                 capturedAt: new Date().toISOString(),
                 file: blob,
-                fileName: `photo_${nextSequence}.jpg`,
             });
             setPhotosCaptured(result.uploadedCounts.photos);
             setVideoCaptured(result.uploadedCounts.video);
@@ -87,12 +87,12 @@ export function TaskField() {
                 taskId,
                 mediaType: 'video',
                 sequenceNumber: 1,
+                contentType: 'video/webm',
                 directionDegrees: compass.headingDegrees ?? undefined,
                 latitude: geolocation.latitude,
                 longitude: geolocation.longitude,
                 capturedAt: new Date().toISOString(),
                 file: blob,
-                fileName: 'video.webm',
             });
             setPhotosCaptured(result.uploadedCounts.photos);
             setVideoCaptured(result.uploadedCounts.video);

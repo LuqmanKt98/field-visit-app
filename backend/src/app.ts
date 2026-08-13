@@ -9,7 +9,7 @@ import { adminRouter } from './routes/admin';
 
 export const app = express();
 
-app.use(cors({ origin: config.corsOrigin }));
+app.use(cors({ origin: config.allowedOrigins.includes('*') ? '*' : config.allowedOrigins }));
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
@@ -23,9 +23,5 @@ app.use('/api/admin', adminRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     console.error(err);
-    if (err instanceof Error && err.message.includes('File too large')) {
-        res.status(413).json({ error: 'File too large' });
-        return;
-    }
     res.status(500).json({ error: 'Internal server error' });
 });

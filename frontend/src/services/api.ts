@@ -40,29 +40,58 @@ export interface UploadMediaArgs {
     taskId: string;
     mediaType: 'photo' | 'video';
     sequenceNumber: number;
+    contentType: 'image/jpeg' | 'image/png' | 'video/webm';
     directionDegrees?: number;
     latitude: number;
     longitude: number;
     capturedAt: string;
     file: Blob;
-    fileName: string;
 }
 
+/**
+ * Uploads a photo/video in two steps: ask the API for a short-lived S3 URL,
+ * then PUT the file straight to S3 from the browser (never through our API).
+ * This is what keeps the upload endpoints small/fast enough to run as Vercel
+ * serverless functions regardless of how large the video file is.
+ */
 export async function uploadMedia(args: UploadMediaArgs): Promise<UploadMediaResponse> {
-    const formData = new FormData();
-    formData.append('mediaType', args.mediaType);
-    formData.append('sequenceNumber', String(args.sequenceNumber));
-    if (args.directionDegrees !== undefined) {
-        formData.append('directionDegrees', String(args.directionDegrees));
-    }
-    formData.append('latitude', String(args.latitude));
-    formData.append('longitude', String(args.longitude));
-    formData.append('capturedAt', args.capturedAt);
-    formData.append('file', args.file, args.fileName);
+    const { uploadUrl, key } = await request<{ uploadUrl: string; key: string }>(
+        `/tasks/${encodeURIComponent(args.taskId)}/media/presign`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mediaType: args.mediaType,
+                sequenceNumber: args.sequenceNumber,
+                contentType: args.contentType,
+                latitude: args.latitude,
+                longitude: args.longitude,
+            }),
+        },
+    );
 
-    return request<UploadMediaResponse>(`/tasks/${encodeURIComponent(args.taskId)}/media`, {
+    const putResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': args.contentType },
+        body: args.file,
+    });
+    if (!putResponse.ok) {
+        throw new ApiError(`Upload to storage failed (${putResponse.status})`, putResponse.status);
+    }
+
+    return request<UploadMediaResponse>(`/tasks/${encodeURIComponent(args.taskId)}/media/confirm`, {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            mediaType: args.mediaType,
+            sequenceNumber: args.sequenceNumber,
+            key,
+            directionDegrees: args.directionDegrees,
+            latitude: args.latitude,
+            longitude: args.longitude,
+            capturedAt: args.capturedAt,
+            fileSizeBytes: args.file.size,
+        }),
     });
 }
 

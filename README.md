@@ -14,9 +14,11 @@ upload straight to AWS S3. Admins log in separately to browse/search all tasks.
 4. Once the rep is within `CAMERA_UNLOCK_DISTANCE_METERS` (default 100m, configurable),
    the camera unlocks.
 5. Each photo/video is captured via `getUserMedia`, with direction (N/S/E/W…) and the
-   timestamp drawn directly onto the pixels (canvas), then uploaded as it's taken to
-   `POST /api/tasks/:taskId/media`, which stores it in S3 under `<bucket>/<taskId>/…`
-   (creating the bucket on first use) and records it in Postgres.
+   timestamp drawn directly onto the pixels (canvas), then uploaded as it's taken in
+   two steps: `POST /api/tasks/:taskId/media/presign` returns a short-lived S3 URL
+   (after re-validating distance), the browser `PUT`s the file straight to S3 with it,
+   then `POST /api/tasks/:taskId/media/confirm` records it in Postgres. The file itself
+   never passes through our API — see [Deployment notes](#deployment-notes) for why.
 6. The server independently re-checks the rep's reported GPS against the property on
    every upload (`ENFORCE_SERVER_SIDE_DISTANCE_CHECK`), so the 100m rule can't be
    bypassed by tampering with the client.
@@ -93,20 +95,40 @@ mirrored for UI display in `frontend/src/config/config.ts`:
 
 ## Deployment notes
 
-The frontend deploys cleanly to Vercel (static build). The backend does **not** fit
-Vercel's serverless model well here, because it streams multipart photo/video uploads
-(up to ~200MB for the video) through to S3 — that needs a long-lived Node process, not
-a short-lived serverless function. Deploy the backend to a regular Node host (Render,
-Railway, Fly.io, or an EC2/Lightsail box) and point `VITE_API_BASE_URL` at it.
+Both the frontend and backend deploy to **Vercel**, as two separate Vercel projects
+pointing at the same GitHub repo (set each project's "Root Directory" to `frontend`
+and `backend` respectively).
+
+Vercel serverless functions are short-lived and cap request bodies at a few MB, which
+would normally rule out a ~200MB video upload passing through the API. That's why
+uploads go straight from the browser to S3 (see step 5 above) instead of through the
+backend — every backend request stays small and fast regardless of file size, which is
+what makes the whole app deployable on Vercel.
+
+- **Backend**: `backend/api/index.ts` exports the Express app as a single serverless
+  function; `backend/vercel.json` routes all requests to it. Set the env vars from
+  `backend/.env.example` in the Vercel project settings. Use a Postgres provider that
+  handles serverless connection pooling well (Neon or Supabase both work out of the
+  box — use their "pooled" connection string for `DATABASE_URL`).
+- **Frontend**: standard Vite static build; `frontend/vercel.json` rewrites unknown
+  paths to `index.html` so client-side routes like `/task/12345` don't 404 on refresh.
+  Set `VITE_API_BASE_URL` to the deployed backend project's URL.
+- **S3 CORS**: the backend sets the bucket's CORS policy automatically (allowing `PUT`
+  from `CORS_ORIGIN`) the first time it touches the bucket, so no manual S3 console
+  step is needed — just make sure `CORS_ORIGIN` includes the real frontend URL once
+  it has a fixed Vercel domain.
 
 ## What's still needed to go live
 
-- **AWS IAM keys** for the `s3access` user (Access Key ID + Secret Access Key) —
-  needs `s3:CreateBucket`, `s3:PutObject`, `s3:PutBucketPublicAccessBlock` on the
-  target bucket/account.
+- **AWS Access Key ID + Secret Access Key** for the `s3access` IAM user, with full S3
+  permissions (not narrowly scoped) — the app creates the bucket, sets its
+  public-access-block and CORS policy, and issues presigned upload URLs, so it's
+  simplest to grant full S3 access once rather than adding individual permissions as
+  they come up. This does **not** need to be (and shouldn't be) full AWS account access
+  — just the S3 service.
 - **Google Maps JavaScript API key** (with the Maps JavaScript API enabled/billed).
-- **A Postgres database** to point `DATABASE_URL` at (any managed Postgres works —
-  RDS, Supabase, Neon, etc.).
+- **A Postgres database** to point `DATABASE_URL` at — I'll set this up (Neon) so no
+  action is needed here.
 - **2 admin accounts** — create with `npm run create-admin -- <username> <email> <password>`
   once the database is live.
 

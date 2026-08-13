@@ -33,6 +33,11 @@ export const config = {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
         bucketName: process.env.S3_BUCKET_NAME ?? 'field-visit-media',
+        // How long a presigned upload URL stays valid. The browser uploads the
+        // photo/video directly to S3 with this URL -- the file never passes
+        // through our API, which is what keeps upload endpoints fast enough to
+        // run as Vercel serverless functions regardless of file size.
+        presignedUrlExpirySeconds: optionalNumber('S3_PRESIGNED_URL_EXPIRY_SECONDS', 300),
     },
 
     // Field visit business rules -- kept here (and mirrored in the frontend's
@@ -48,7 +53,11 @@ export const config = {
         enforceServerSideDistanceCheck: (process.env.ENFORCE_SERVER_SIDE_DISTANCE_CHECK ?? 'true') === 'true',
     },
 
-    corsOrigin: process.env.CORS_ORIGIN ?? '*',
+    // Comma-separated list of allowed frontend origins, e.g.
+    // "https://myfieldvisitapp.vercel.app,http://localhost:5173". Used both for the
+    // API's CORS policy and the S3 bucket's CORS policy (browser uploads directly to
+    // S3 using a presigned URL, so the bucket needs its own CORS rule too).
+    allowedOrigins: (process.env.CORS_ORIGIN ?? '*').split(',').map((o) => o.trim()),
 };
 
 export function assertProductionConfig(): void {
