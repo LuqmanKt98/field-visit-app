@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import { haversineDistanceMeters, headingToCardinal } from '../utils/geo';
-import { createPresignedUploadUrl, headUploadedObject, taskFolderUrl } from '../services/s3Service';
+import { createPresignedUploadUrl, deleteObject, headUploadedObject, taskFolderUrl } from '../services/s3Service';
 import {
     getTaskById,
     getTaskMedia,
@@ -185,6 +185,19 @@ mediaRouter.post('/:taskId/media/confirm', async (req, res) => {
     if (stored.contentType && !contentTypeMatchesMedia(mediaType, stored.contentType)) {
         res.status(409).json({
             error: `The stored file is ${stored.contentType}, which is not a valid ${mediaType}.`,
+        });
+        return;
+    }
+
+    // A presigned PUT cannot enforce a size limit, so an oversized object can still
+    // reach the bucket. Discard it rather than counting it, so storage cannot be run
+    // up indefinitely against the task.
+    const maxBytes =
+        mediaType === 'photo' ? config.fieldVisit.maxPhotoBytes : config.fieldVisit.maxVideoBytes;
+    if (stored.sizeBytes > maxBytes) {
+        await deleteObject(key);
+        res.status(413).json({
+            error: `That ${mediaType} is ${Math.round(stored.sizeBytes / 1024 / 1024)} MB, over the ${Math.round(maxBytes / 1024 / 1024)} MB limit. It was not saved.`,
         });
         return;
     }

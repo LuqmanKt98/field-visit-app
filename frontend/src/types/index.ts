@@ -34,6 +34,8 @@ export interface TaskDetails {
     cameraUnlockDistanceMeters: number;
     requiredPhotoCount: number;
     requiredVideoCount: number;
+    maxPhotoBytes: number;
+    maxVideoBytes: number;
 }
 
 export type MediaType = 'photo' | 'video';

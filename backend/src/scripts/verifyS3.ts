@@ -24,17 +24,6 @@ async function main(): Promise<void> {
     });
     console.log('1. presign                 OK ->', key);
 
-    const put = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: Buffer.from('s3-connectivity-probe'),
-    });
-    if (!put.ok) {
-        console.error('2. direct PUT              FAILED ->', put.status, await put.text());
-        process.exit(1);
-    }
-    console.log('2. direct browser-style PUT OK ->', put.status);
-
     const client = new S3Client({
         region: config.aws.region,
         credentials: config.aws.accessKeyId
@@ -42,14 +31,37 @@ async function main(): Promise<void> {
             : undefined,
     });
 
-    const head = await client.send(new HeadObjectCommand({ Bucket: config.aws.bucketName, Key: key }));
-    console.log(`3. object stored           OK -> ${head.ContentLength} bytes, encryption: ${head.ServerSideEncryption}`);
+    // Cleanup runs in `finally`: a failure between the PUT and the delete would
+    // otherwise orphan a probe object in a bucket that should only hold task folders.
+    let uploaded = false;
+    try {
+        const put = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/jpeg' },
+            body: Buffer.from('s3-connectivity-probe'),
+        });
+        if (!put.ok) {
+            throw new Error(`direct PUT failed -> ${put.status} ${await put.text()}`);
+        }
+        uploaded = true;
+        console.log('2. direct browser-style PUT OK ->', put.status);
 
-    const cors = await client.send(new GetBucketCorsCommand({ Bucket: config.aws.bucketName }));
-    console.log('4. bucket CORS             OK ->', JSON.stringify(cors.CORSRules?.[0]?.AllowedOrigins));
+        const head = await client.send(new HeadObjectCommand({ Bucket: config.aws.bucketName, Key: key }));
+        console.log(`3. object stored           OK -> ${head.ContentLength} bytes, encryption: ${head.ServerSideEncryption}`);
 
-    await client.send(new DeleteObjectCommand({ Bucket: config.aws.bucketName, Key: key }));
-    console.log('5. probe object removed    OK');
+        const cors = await client.send(new GetBucketCorsCommand({ Bucket: config.aws.bucketName }));
+        console.log('4. bucket CORS             OK ->', JSON.stringify(cors.CORSRules?.[0]?.AllowedOrigins));
+    } finally {
+        if (uploaded) {
+            try {
+                await client.send(new DeleteObjectCommand({ Bucket: config.aws.bucketName, Key: key }));
+                console.log('5. probe object removed    OK');
+            } catch (err) {
+                console.error(`WARNING: could not remove probe object ${key} -`, (err as Error).message);
+            }
+        }
+    }
+
     console.log('\nS3 upload path is working.');
 }
 

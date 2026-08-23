@@ -47,6 +47,15 @@ export function MediaGallery({ token, taskId, onClose, onAuthExpired }: MediaGal
                 {!media && !error && <p className="muted">Loading media…</p>}
                 {media && media.length === 0 && <p className="muted">No media has been captured for this task yet.</p>}
 
+                {/* Direction is a client requirement, so its absence should be visible
+                    to whoever reviews the visit rather than buried in the captions. */}
+                {media && media.length > 0 && media.every((m) => !m.directionCardinal) && (
+                    <div className="warning-banner">
+                        <strong>No direction data.</strong> This visit was captured on a device with no
+                        compass reading, so none of the media carries a direction stamp.
+                    </div>
+                )}
+
                 {photos.length > 0 && (
                     <>
                         <h3>Photos ({photos.length})</h3>

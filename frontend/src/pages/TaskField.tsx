@@ -90,6 +90,17 @@ export function TaskField() {
                 return;
             }
 
+            // Refuse oversized media before spending the rep's mobile data on an upload
+            // the server will reject and delete anyway.
+            const maxBytes = capture.mediaType === 'photo' ? task?.maxPhotoBytes : task?.maxVideoBytes;
+            if (maxBytes && capture.blob.size > maxBytes) {
+                setPending(null);
+                setUploadError(
+                    `That ${capture.mediaType} is ${Math.round(capture.blob.size / 1024 / 1024)} MB, over the ${Math.round(maxBytes / 1024 / 1024)} MB limit. Please capture a shorter ${capture.mediaType === 'video' ? 'video' : 'shot'}.`,
+                );
+                return;
+            }
+
             inFlightRef.current = true;
             setUploading(true);
             setUploadError(null);
@@ -121,7 +132,7 @@ export function TaskField() {
                 setUploading(false);
             }
         },
-        [taskId, geolocation.latitude, geolocation.longitude],
+        [taskId, geolocation.latitude, geolocation.longitude, task?.maxPhotoBytes, task?.maxVideoBytes],
     );
 
     function handlePhotoCaptured(blob: Blob, contentType: 'image/jpeg'): void {
@@ -213,10 +224,18 @@ export function TaskField() {
                     Enable compass for direction stamping
                 </button>
             )}
-            {compass.permissionDenied && (
-                <p className="muted">
-                    Compass unavailable — photos will still upload, but without a direction stamp.
-                </p>
+            {/*
+                Warn whenever no heading is available -- not only when permission was
+                denied. Many devices simply have no magnetometer, in which case nothing
+                is "denied" and the rep would otherwise get no indication at all that
+                every photo is being stamped "Direction: N/A".
+            */}
+            {cameraUnlocked && !compass.needsPermissionRequest && compass.cardinal === null && (
+                <div className="warning-banner">
+                    <strong>No compass reading.</strong> Photos will be stamped “Direction: N/A”. Try moving
+                    the phone in a figure-8 to calibrate, or check that Motion &amp; Orientation access is
+                    enabled in your browser settings.
+                </div>
             )}
 
             <ProgressTracker

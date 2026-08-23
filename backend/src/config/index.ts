@@ -73,6 +73,13 @@ export const config = {
         cameraUnlockDistanceMeters: optionalNumber('CAMERA_UNLOCK_DISTANCE_METERS', 100),
         requiredPhotoCount: optionalNumber('REQUIRED_PHOTO_COUNT', 10),
         requiredVideoCount: optionalNumber('REQUIRED_VIDEO_COUNT', 1),
+
+        // Upload ceilings. A presigned PUT cannot carry a content-length-range
+        // condition (only a presigned POST can), so these are enforced in two places:
+        // the browser refuses to start an oversized upload, and confirm deletes
+        // anything oversized that reached the bucket anyway rather than counting it.
+        maxPhotoBytes: optionalNumber('MAX_PHOTO_BYTES', 15 * 1024 * 1024), // 15 MB
+        maxVideoBytes: optionalNumber('MAX_VIDEO_BYTES', 200 * 1024 * 1024), // 200 MB
         // Re-checks the distance on the server on every upload so the rule cannot be
         // bypassed by editing the UI.
         //

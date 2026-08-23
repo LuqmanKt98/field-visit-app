@@ -5,6 +5,7 @@ import {
     PutObjectCommand,
     GetObjectCommand,
     HeadObjectCommand,
+    DeleteObjectCommand,
     PutPublicAccessBlockCommand,
     PutBucketCorsCommand,
     PutBucketEncryptionCommand,
@@ -217,6 +218,11 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
 function responseContentTypeForKey(key: string): string {
     const extension = key.split('.').pop()?.toLowerCase() ?? '';
     return EXTENSION_CONTENT_TYPES[extension] ?? 'application/octet-stream';
+}
+
+/** Removes an object -- used to discard an upload that broke the size ceiling. */
+export async function deleteObject(key: string): Promise<void> {
+    await s3Client.send(new DeleteObjectCommand({ Bucket: config.aws.bucketName, Key: key }));
 }
 
 /** Folder-level URL stored on tasks_field.cloud_url once the task has media. */

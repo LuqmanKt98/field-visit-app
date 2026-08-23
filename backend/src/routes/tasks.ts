@@ -48,6 +48,8 @@ tasksRouter.get('/:taskId', async (req, res) => {
         cameraUnlockDistanceMeters: config.fieldVisit.cameraUnlockDistanceMeters,
         requiredPhotoCount: config.fieldVisit.requiredPhotoCount,
         requiredVideoCount: config.fieldVisit.requiredVideoCount,
+        maxPhotoBytes: config.fieldVisit.maxPhotoBytes,
+        maxVideoBytes: config.fieldVisit.maxVideoBytes,
     });
 });
 

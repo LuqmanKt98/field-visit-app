@@ -30,6 +30,28 @@ export interface TaskFieldRow {
     g_location: string | null;
     g_latitude: string | null;
     g_longitude: string | null;
+    g_loc_type: string | null;
+    g_types: string | null;
+    g_street_number: string | null;
+    g_route: string | null;
+    g_route_sh: string | null;
+    g_locality: string | null;
+    g_sublocality_level_1: string | null;
+    g_sublocality_level_2: string | null;
+    // NB: the client's spreadsheet spells these G_ADMINSTRATIVE_* (missing the second
+    // "i"); the migration uses the correct spelling. See README.
+    g_administrative_area_level_1: string | null;
+    g_administrative_area_level_2: string | null;
+    g_administrative_area_level_3: string | null;
+    g_administrative_area_level_1_sh: string | null;
+    g_administrative_area_level_2_sh: string | null;
+    g_administrative_area_level_3_sh: string | null;
+    g_country: string | null;
+    g_country_sh: string | null;
+    g_postal_code: string | null;
+    g_postal_code_suffix: string | null;
+    g_bounds: string | null;
+    g_viewport: string | null;
     web_url: string | null;
     folder_url: string | null;
     cloud_url: string | null;
@@ -37,6 +59,9 @@ export interface TaskFieldRow {
     created_timestamp: Date | null;
     updated_by: string | null;
     updated_timestamp: Date | null;
+    add_info1: string | null;
+    add_info2: string | null;
+    add_info3: string | null;
 }
 
 export type MediaType = 'photo' | 'video';
