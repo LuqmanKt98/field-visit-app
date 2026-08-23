@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "migrate": "tsx src/db/migrate.ts",
     "create-admin": "tsx src/scripts/createAdmin.ts",
+    "provision-s3": "tsx src/scripts/provisionS3.ts",
     "verify-s3": "tsx src/scripts/verifyS3.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"

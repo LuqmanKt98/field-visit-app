@@ -38,10 +38,23 @@ export interface TaskDetails {
 
 export type MediaType = 'photo' | 'video';
 
+/** Admin view: includes a presigned, viewable URL. */
 export interface TaskMediaItem {
     mediaType: MediaType;
     sequenceNumber: number;
     url: string;
+    directionCardinal: string | null;
+    capturedAt: string;
+    fileSizeBytes?: number | null;
+}
+
+/**
+ * Rep view: no URL. The rep-facing endpoint is unauthenticated (the Task ID is the
+ * only credential), so it returns just enough to resume progress after a reload.
+ */
+export interface TaskMediaProgressItem {
+    mediaType: MediaType;
+    sequenceNumber: number;
     directionCardinal: string | null;
     capturedAt: string;
 }

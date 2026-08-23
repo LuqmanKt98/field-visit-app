@@ -59,7 +59,15 @@ tables were needed beyond that schema:
   and validate 10 photos + 1 video individually.
 - `admin_users` — admin login credentials (not in the original schema).
 
-### One deviation from the supplied schema
+### Deviations from the supplied schema
+
+**Six column names were corrected.** The spreadsheet spells them
+`G_ADMINSTRATIVE_AREA_LEVEL_1..3` (and the `_SH` variants) — missing the second "i".
+The migration uses the correct `G_ADMINISTRATIVE_…`. The `AGENT_FM`/`AGENT_LN`
+inconsistency *was* preserved as supplied. **Flag this to the client**: any ETL written
+against the spreadsheet will fail with `column does not exist` until it is updated.
+
+
 
 `004_widen_url_columns.sql` widens `CLOUD_URL`, `FOLDER_URL` and `WEB_URL` from
 `VARCHAR(75)` to `VARCHAR(500)`. A real S3 folder URL doesn't fit in 75 characters —
@@ -81,6 +89,7 @@ cd backend
 npm install
 cp .env.example .env      # fill in DATABASE_URL, AWS keys, JWT_SECRET
 npm run migrate           # creates tables
+npm run provision-s3      # once per environment: creates the bucket + its policies
 npm run create-admin -- <username> <email> <password>   # repeat for the 2nd admin
 npm run dev                # http://localhost:4000
 ```
@@ -148,10 +157,19 @@ what makes the whole app deployable on Vercel.
 - **Frontend**: standard Vite static build; `frontend/vercel.json` rewrites unknown
   paths to `index.html` so client-side routes like `/task/12345` don't 404 on refresh.
   Set `VITE_API_BASE_URL` to the deployed backend project's URL.
-- **S3 CORS**: the backend sets the bucket's CORS policy automatically (allowing `PUT`
-  from `CORS_ORIGIN`) the first time it touches the bucket, so no manual S3 console
-  step is needed — just make sure `CORS_ORIGIN` includes the real frontend URL once
-  it has a fixed Vercel domain.
+- **S3 provisioning is a one-off step, not part of a request.** Run `npm run provision-s3`
+  once per environment with that environment's `CORS_ORIGIN`. It creates the bucket,
+  blocks public access, enables default encryption, and sets the CORS rule for browser
+  uploads. Doing this per-request would force the runtime IAM user to hold bucket-admin
+  rights permanently, and — because the CORS rule is derived from `CORS_ORIGIN` — a
+  preview deployment would overwrite production's CORS policy and break uploads for
+  real reps. At runtime the API only signs URLs.
+- **Runtime IAM permissions** can therefore be narrow: `s3:PutObject` and `s3:GetObject`
+  on `{bucket}/*`. The broader bucket-admin rights are only needed by the provisioning
+  script.
+- **`JWT_SECRET` must be set.** There is no fallback: the app refuses to boot in
+  production without it (checked from both `src/server.ts` and the Vercel entrypoint
+  `api/index.ts`).
 
 ## What's still needed to go live
 
@@ -179,3 +197,11 @@ what makes the whole app deployable on Vercel.
   direction stamp — this can't be meaningfully tested without a physical device.
 - **Camera and GPS require HTTPS** on a real device. Both are fine on the Vercel
   deployment; locally they work on `localhost` only.
+- **The geofence verifies a claim, not a position.** Coordinates are supplied by the
+  browser, so a determined rep can send the property's own coordinates. This ceiling is
+  inherent to browser geolocation — no web app can do better. The claimed position is
+  stored per upload so mismatches can be audited after the fact. If stronger proof of
+  presence is required, that needs a native app with attestation.
+- **Not yet verified on physical hardware**: real camera capture (`getUserMedia`,
+  autofocus, device resolutions), iOS Safari's MP4 recording path, and physical compass
+  accuracy. These need a real iPhone and Android handset before launch.

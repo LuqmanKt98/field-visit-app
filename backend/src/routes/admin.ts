@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdminAuth } from '../middleware/adminAuth';
 import { getTaskMedia, listTasksForAdmin } from '../services/taskService';
 import { createPresignedDownloadUrl } from '../services/s3Service';
+import { isValidTaskId } from '../utils/taskId';
 import { config } from '../config';
 
 export const adminRouter = Router();
@@ -12,7 +13,9 @@ const listQuerySchema = z.object({
     search: z.string().optional(),
     sortBy: z.enum(['created_timestamp', 'updated_timestamp']).default('updated_timestamp'),
     sortDir: z.enum(['asc', 'desc']).default('desc'),
-    page: z.coerce.number().int().min(1).default(1),
+    // Bounded like pageSize: an unbounded page number overflows the OFFSET bigint and
+    // surfaces as a 500 rather than a validation error.
+    page: z.coerce.number().int().min(1).max(1_000_000).default(1),
     pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -50,6 +53,11 @@ adminRouter.get('/tasks', async (req, res) => {
 // Returns short-lived presigned URLs. The bucket blocks all public access, so the
 // stored s3_url is a 403 for anyone who opens it -- viewing has to be signed.
 adminRouter.get('/tasks/:taskId/media', async (req, res) => {
+    if (!isValidTaskId(req.params.taskId)) {
+        res.status(400).json({ error: 'taskId must be numeric' });
+        return;
+    }
+
     const media = await getTaskMedia(req.params.taskId);
     res.json({
         media: await Promise.all(
@@ -64,6 +72,6 @@ adminRouter.get('/tasks/:taskId/media', async (req, res) => {
                 capturedLongitude: m.captured_longitude === null ? null : Number(m.captured_longitude),
             })),
         ),
-        expiresInSeconds: config.aws.presignedUrlExpirySeconds,
+        expiresInSeconds: config.aws.downloadUrlExpirySeconds,
     });
 });

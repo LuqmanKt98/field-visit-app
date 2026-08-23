@@ -29,95 +29,85 @@ const s3Client = new S3Client({
     requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 
-let bucketReadyPromise: Promise<void> | null = null;
-
 /**
- * Ensures the shared media bucket exists (creating it on first use) and has a
- * CORS policy that lets the rep's browser PUT photos/videos to it directly.
- * The client agreed on 2024-07-27 to a single bucket with a folder per Task ID
- * (the AWS-recommended approach) rather than one bucket per task.
+ * Creates the media bucket if absent and applies its policies. The client agreed on
+ * 2024-07-27 to a single bucket with a folder per Task ID (the AWS-recommended
+ * approach) rather than one bucket per task.
  *
- * Uploads go straight from the browser to S3 via a presigned URL rather than
- * through our API, so the backend can run as short-lived serverless functions
- * (Vercel) without ever streaming large video files through them.
+ * This is a PROVISIONING step -- run once per environment via `npm run provision-s3`,
+ * never from a request. Doing it on every cold start meant the runtime IAM user needed
+ * permanent bucket-administration rights, and worse, the CORS rule is derived from each
+ * instance's CORS_ORIGIN: a preview deployment would silently overwrite production's
+ * bucket CORS and break uploads for real reps (last cold start wins).
  */
-async function ensureBucketExists(): Promise<void> {
-    if (!bucketReadyPromise) {
-        bucketReadyPromise = (async () => {
-            let bucketExists = true;
-            try {
-                await s3Client.send(new HeadBucketCommand({ Bucket: config.aws.bucketName }));
-            } catch (err) {
-                const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-                if (status !== 404 && status !== 403) throw err;
-                bucketExists = false;
-            }
-
-            if (!bucketExists) {
-                await s3Client.send(
-                    new CreateBucketCommand({
-                        Bucket: config.aws.bucketName,
-                        ...(config.aws.region !== 'us-east-1'
-                            ? { CreateBucketConfiguration: { LocationConstraint: config.aws.region as never } }
-                            : {}),
-                    }),
-                );
-            }
-
-            // The settings below are applied on every cold start rather than only at
-            // creation time: they're idempotent, and doing it this way means a bucket
-            // that already exists (or drifted in the console) is corrected instead of
-            // silently keeping the wrong policy.
-            await s3Client.send(
-                new PutPublicAccessBlockCommand({
-                    Bucket: config.aws.bucketName,
-                    PublicAccessBlockConfiguration: {
-                        BlockPublicAcls: true,
-                        IgnorePublicAcls: true,
-                        BlockPublicPolicy: true,
-                        RestrictPublicBuckets: true,
-                    },
-                }),
-            );
-
-            // Encryption at rest is set as a bucket-level default rather than a
-            // per-object header. A presigned URL can only carry headers the browser
-            // will actually send (it sends just Content-Type), so requiring
-            // x-amz-server-side-encryption per object would break the upload. The
-            // bucket default applies to every object regardless of how it arrives.
-            await s3Client.send(
-                new PutBucketEncryptionCommand({
-                    Bucket: config.aws.bucketName,
-                    ServerSideEncryptionConfiguration: {
-                        Rules: [
-                            {
-                                ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' },
-                                BucketKeyEnabled: true,
-                            },
-                        ],
-                    },
-                }),
-            );
-
-            await s3Client.send(
-                new PutBucketCorsCommand({
-                    Bucket: config.aws.bucketName,
-                    CORSConfiguration: {
-                        CORSRules: [
-                            {
-                                AllowedMethods: ['PUT'],
-                                AllowedOrigins: config.allowedOrigins,
-                                AllowedHeaders: ['Content-Type'],
-                                ExposeHeaders: ['ETag'],
-                                MaxAgeSeconds: 3600,
-                            },
-                        ],
-                    },
-                }),
-            );
-        })();
+export async function provisionBucket(): Promise<void> {
+    let bucketExists = true;
+    try {
+        await s3Client.send(new HeadBucketCommand({ Bucket: config.aws.bucketName }));
+    } catch (err) {
+        const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+        if (status !== 404 && status !== 403) throw err;
+        bucketExists = false;
     }
-    return bucketReadyPromise;
+
+    if (!bucketExists) {
+        await s3Client.send(
+            new CreateBucketCommand({
+                Bucket: config.aws.bucketName,
+                ...(config.aws.region !== 'us-east-1'
+                    ? { CreateBucketConfiguration: { LocationConstraint: config.aws.region as never } }
+                    : {}),
+            }),
+        );
+        console.log(`created bucket ${config.aws.bucketName} in ${config.aws.region}`);
+    }
+
+    await s3Client.send(
+        new PutPublicAccessBlockCommand({
+            Bucket: config.aws.bucketName,
+            PublicAccessBlockConfiguration: {
+                BlockPublicAcls: true,
+                IgnorePublicAcls: true,
+                BlockPublicPolicy: true,
+                RestrictPublicBuckets: true,
+            },
+        }),
+    );
+
+    // Encryption at rest is set as a bucket-level default rather than a per-object
+    // header. A presigned URL can only carry headers the browser actually sends, so
+    // requiring x-amz-server-side-encryption per object would break the upload. The
+    // bucket default applies to every object regardless of how it arrives.
+    await s3Client.send(
+        new PutBucketEncryptionCommand({
+            Bucket: config.aws.bucketName,
+            ServerSideEncryptionConfiguration: {
+                Rules: [
+                    {
+                        ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' },
+                        BucketKeyEnabled: true,
+                    },
+                ],
+            },
+        }),
+    );
+
+    await s3Client.send(
+        new PutBucketCorsCommand({
+            Bucket: config.aws.bucketName,
+            CORSConfiguration: {
+                CORSRules: [
+                    {
+                        AllowedMethods: ['PUT'],
+                        AllowedOrigins: config.allowedOrigins,
+                        AllowedHeaders: ['Content-Type'],
+                        ExposeHeaders: ['ETag'],
+                        MaxAgeSeconds: 3600,
+                    },
+                ],
+            },
+        }),
+    );
 }
 
 export interface PresignedUploadParams {
@@ -139,11 +129,8 @@ export async function createPresignedUploadUrl({
     fileName,
     contentType,
 }: PresignedUploadParams): Promise<PresignedUploadResult> {
-    await ensureBucketExists();
-
-    // Only Content-Type is signed here -- it's the one header the browser sends on
-    // its PUT. Anything else signed (encryption, checksums) would have to be
-    // reproduced exactly by the browser or the signature check fails.
+    // No bucket bootstrap here -- see provisionBucket(). Signing is local computation,
+    // so this path makes no AWS calls at all.
     const key = `${taskId}/${fileName}`;
     const command = new PutObjectCommand({
         Bucket: config.aws.bucketName,
@@ -151,8 +138,14 @@ export async function createPresignedUploadUrl({
         ContentType: contentType,
     });
 
+    // signableHeaders is what actually binds Content-Type into the signature. Setting
+    // ContentType on the command alone does NOT: by default only `host` is signed, so
+    // the browser could PUT any type it liked (text/html included) and S3 would store
+    // it -- making every content-type check in the API decorative. Naming it here
+    // forces the PUT to match or fail the signature check.
     const uploadUrl = await getSignedUrl(s3Client, command, {
         expiresIn: config.aws.presignedUrlExpirySeconds,
+        signableHeaders: new Set(['content-type', 'host']),
     });
 
     return {
@@ -163,20 +156,25 @@ export async function createPresignedUploadUrl({
     };
 }
 
+export interface StoredObject {
+    sizeBytes: number;
+    contentType: string | undefined;
+}
+
 /**
- * Confirms an object is really in the bucket, returning its size (or null if absent).
+ * Reads back an object's size and stored Content-Type (or null if it is absent).
  *
  * The browser uploads straight to S3, so the API never sees the bytes. Without this
  * check a client could call /media/confirm having uploaded nothing and the task would
  * be marked complete with missing files -- the requirement is that the task completes
  * only once the media is *stored successfully*.
  */
-export async function getUploadedObjectSize(key: string): Promise<number | null> {
+export async function headUploadedObject(key: string): Promise<StoredObject | null> {
     try {
         const head = await s3Client.send(
             new HeadObjectCommand({ Bucket: config.aws.bucketName, Key: key }),
         );
-        return head.ContentLength ?? 0;
+        return { sizeBytes: head.ContentLength ?? 0, contentType: head.ContentType };
     } catch (err) {
         const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
         if (status === 404 || status === 403) return null;
@@ -195,9 +193,30 @@ export async function getUploadedObjectSize(key: string): Promise<number | null>
 export async function createPresignedDownloadUrl(key: string): Promise<string> {
     return getSignedUrl(
         s3Client,
-        new GetObjectCommand({ Bucket: config.aws.bucketName, Key: key }),
-        { expiresIn: config.aws.presignedUrlExpirySeconds },
+        new GetObjectCommand({
+            Bucket: config.aws.bucketName,
+            Key: key,
+            // Override the response type from the key's own extension rather than
+            // letting the object's stored Content-Type decide. If a bad object ever
+            // lands in the bucket, this stops the presigned URL from serving it as
+            // something the browser would execute on the AWS origin.
+            ResponseContentType: responseContentTypeForKey(key),
+        }),
+        { expiresIn: config.aws.downloadUrlExpirySeconds },
     );
+}
+
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webm: 'video/webm',
+    mp4: 'video/mp4',
+};
+
+function responseContentTypeForKey(key: string): string {
+    const extension = key.split('.').pop()?.toLowerCase() ?? '';
+    return EXTENSION_CONTENT_TYPES[extension] ?? 'application/octet-stream';
 }
 
 /** Folder-level URL stored on tasks_field.cloud_url once the task has media. */

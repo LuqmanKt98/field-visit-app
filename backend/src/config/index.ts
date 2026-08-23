@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomBytes } from 'node:crypto';
 
 function requireEnv(name: string): string {
     const value = process.env[name];
@@ -6,6 +7,27 @@ function requireEnv(name: string): string {
         throw new Error(`Missing required environment variable: ${name}`);
     }
     return value;
+}
+
+/**
+ * Signing secret for admin sessions.
+ *
+ * There is deliberately no hard-coded fallback. A published constant here would let
+ * anyone who can read this repository forge an admin token against any deployment
+ * that forgot to set JWT_SECRET -- failing open, silently, into full admin access.
+ * In development we mint a random per-process secret instead: sessions do not survive
+ * a restart, which is a small price for never shipping a shared secret.
+ */
+function resolveJwtSecret(): string {
+    const fromEnv = process.env.JWT_SECRET;
+    if (fromEnv) return fromEnv;
+    if ((process.env.NODE_ENV ?? 'development') === 'production') {
+        // assertProductionConfig() reports this properly; this is the backstop for any
+        // entrypoint that forgets to call it.
+        throw new Error('JWT_SECRET must be set in production');
+    }
+    console.warn('[config] JWT_SECRET not set - using a random secret for this process only.');
+    return randomBytes(32).toString('hex');
 }
 
 function optionalNumber(name: string, fallback: number): number {
@@ -24,7 +46,7 @@ export const config = {
     },
 
     jwt: {
-        secret: process.env.JWT_SECRET ?? 'dev-only-insecure-secret-change-me',
+        secret: resolveJwtSecret(),
         expiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
     },
 
@@ -38,6 +60,9 @@ export const config = {
         // through our API, which is what keeps upload endpoints fast enough to
         // run as Vercel serverless functions regardless of file size.
         presignedUrlExpirySeconds: optionalNumber('S3_PRESIGNED_URL_EXPIRY_SECONDS', 300),
+        // Viewing links live longer than upload links: an admin can reasonably leave a
+        // media gallery open for longer than a single upload takes.
+        downloadUrlExpirySeconds: optionalNumber('S3_DOWNLOAD_URL_EXPIRY_SECONDS', 3600),
     },
 
     // Field visit business rules -- kept here (and mirrored in the frontend's
@@ -48,8 +73,13 @@ export const config = {
         cameraUnlockDistanceMeters: optionalNumber('CAMERA_UNLOCK_DISTANCE_METERS', 100),
         requiredPhotoCount: optionalNumber('REQUIRED_PHOTO_COUNT', 10),
         requiredVideoCount: optionalNumber('REQUIRED_VIDEO_COUNT', 1),
-        // If true, the server independently re-checks the rep's reported GPS position
-        // against the property location on every upload, instead of trusting the client.
+        // Re-checks the distance on the server on every upload so the rule cannot be
+        // bypassed by editing the UI.
+        //
+        // Be clear about what this is NOT: the coordinates are supplied by the client,
+        // so this verifies the *claim*, not the rep's actual position. A determined rep
+        // can send the property's own coordinates. That ceiling is inherent to browser
+        // geolocation; the claim is stored per upload so mismatches can be audited.
         enforceServerSideDistanceCheck: (process.env.ENFORCE_SERVER_SIDE_DISTANCE_CHECK ?? 'true') === 'true',
     },
 

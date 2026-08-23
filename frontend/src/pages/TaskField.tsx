@@ -77,9 +77,16 @@ export function TaskField() {
 
     const send = useCallback(
         async (capture: PendingCapture): Promise<void> => {
-            if (inFlightRef.current) return;
+            // Hold a capture that arrives mid-upload rather than discarding it, so the
+            // rep can retry instead of losing the shot with no feedback at all.
+            if (inFlightRef.current) {
+                setPending(capture);
+                setUploadError('One upload is still finishing. Tap Retry to send this capture.');
+                return;
+            }
             if (geolocation.latitude === null || geolocation.longitude === null) {
-                setUploadError('Waiting for your location. Please try again in a moment.');
+                setPending(capture);
+                setUploadError('Waiting for your location. Tap Retry once your position is found.');
                 return;
             }
 

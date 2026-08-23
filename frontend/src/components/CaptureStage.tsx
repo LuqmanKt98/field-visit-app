@@ -66,31 +66,48 @@ export function CaptureStage({
         };
     }, []);
 
-    const captureVideoFrame = useCallback(
-        (canvas: HTMLCanvasElement): boolean => {
-            const video = videoRef.current;
-            if (!video || !video.videoWidth) return false;
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return false;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            drawStamp(ctx, canvas.width, canvas.height, cardinal, new Date());
-            return true;
-        },
-        [cardinal],
-    );
+    // The recording loop re-schedules itself via requestAnimationFrame and therefore
+    // keeps calling whichever captureVideoFrame existed when recording started. Reading
+    // the heading from a ref (rather than closing over the prop) is what lets the
+    // direction stamp keep updating as the rep turns -- closing over it froze every
+    // frame at the bearing from the moment Start was pressed.
+    const cardinalRef = useRef(cardinal);
+    useEffect(() => {
+        cardinalRef.current = cardinal;
+    }, [cardinal]);
+
+    const captureVideoFrame = useCallback((canvas: HTMLCanvasElement): boolean => {
+        const video = videoRef.current;
+        if (!video || !video.videoWidth) return false;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return false;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        drawStamp(ctx, canvas.width, canvas.height, cardinalRef.current, new Date());
+        return true;
+    }, []);
+
+    // canvas.toBlob is async, so a fast second tap can land before `busy` re-renders the
+    // button as disabled. This latch closes that window synchronously -- without it the
+    // second capture was encoded and then silently discarded, giving the rep no error
+    // and a counter that simply did not move.
+    const capturingRef = useRef(false);
 
     function handleTakePhoto(): void {
+        if (capturingRef.current) return;
         const canvas = document.createElement('canvas');
         if (!captureVideoFrame(canvas)) {
             setRecordError('Camera is still starting up. Try again in a moment.');
             return;
         }
         setRecordError(null);
+        capturingRef.current = true;
         canvas.toBlob(
             (blob) => {
+                capturingRef.current = false;
                 if (blob) onPhotoCaptured(blob, 'image/jpeg');
+                else setRecordError('Could not save that photo. Please take it again.');
             },
             'image/jpeg',
             0.92,

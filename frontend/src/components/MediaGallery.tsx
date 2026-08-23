@@ -82,7 +82,7 @@ export function MediaGallery({ token, taskId, onClose, onAuthExpired }: MediaGal
 
                 {media && media.length > 0 && (
                     <p className="muted modal-footnote">
-                        These links are temporary and expire shortly — reopen this dialog to refresh them.
+                        These links are temporary — if an image stops loading, reopen this dialog to refresh them.
                     </p>
                 )}
             </div>

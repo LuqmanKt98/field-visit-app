@@ -1,5 +1,11 @@
 import { config } from '../config/config';
-import { AdminTaskSummary, TaskDetails, TaskMediaItem, UploadMediaResponse } from '../types';
+import {
+    AdminTaskSummary,
+    TaskDetails,
+    TaskMediaItem,
+    TaskMediaProgressItem,
+    UploadMediaResponse,
+} from '../types';
 
 class ApiError extends Error {
     constructor(
@@ -32,7 +38,7 @@ export function getTask(taskId: string): Promise<TaskDetails> {
     return request<TaskDetails>(`/tasks/${encodeURIComponent(taskId)}`);
 }
 
-export function getTaskMedia(taskId: string): Promise<{ media: TaskMediaItem[] }> {
+export function getTaskMedia(taskId: string): Promise<{ media: TaskMediaProgressItem[] }> {
     return request(`/tasks/${encodeURIComponent(taskId)}/media`);
 }
 
@@ -57,7 +63,7 @@ export interface UploadMediaArgs {
  * serverless functions regardless of how large the video file is.
  */
 export async function uploadMedia(args: UploadMediaArgs): Promise<UploadMediaResponse> {
-    const { uploadUrl, key } = await request<{ uploadUrl: string; key: string }>(
+    const { uploadUrl } = await request<{ uploadUrl: string; key: string }>(
         `/tasks/${encodeURIComponent(args.taskId)}/media/presign`,
         {
             method: 'POST',
@@ -84,10 +90,12 @@ export async function uploadMedia(args: UploadMediaArgs): Promise<UploadMediaRes
     return request<UploadMediaResponse>(`/tasks/${encodeURIComponent(args.taskId)}/media/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // No key is sent: the server derives it from mediaType + sequenceNumber +
+        // contentType, so a client cannot point two slots at the same object.
         body: JSON.stringify({
             mediaType: args.mediaType,
             sequenceNumber: args.sequenceNumber,
-            key,
+            contentType: args.contentType,
             directionDegrees: args.directionDegrees,
             latitude: args.latitude,
             longitude: args.longitude,

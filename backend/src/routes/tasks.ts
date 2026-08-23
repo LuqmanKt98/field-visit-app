@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getTaskById, getTaskMedia } from '../services/taskService';
-import { createPresignedDownloadUrl } from '../services/s3Service';
+import { isValidTaskId } from '../utils/taskId';
 import { config } from '../config';
 
 export const tasksRouter = Router();
@@ -9,7 +9,7 @@ export const tasksRouter = Router();
 // Loads property/location details for the rep's task-ID entry screen.
 tasksRouter.get('/:taskId', async (req, res) => {
     const { taskId } = req.params;
-    if (!/^\d+$/.test(taskId)) {
+    if (!isValidTaskId(taskId)) {
         res.status(400).json({ error: 'taskId must be numeric' });
         return;
     }
@@ -53,8 +53,19 @@ tasksRouter.get('/:taskId', async (req, res) => {
 
 // GET /api/tasks/:taskId/media
 // Lets the rep's browser resume progress after a page reload.
+//
+// This endpoint is deliberately unauthenticated -- reps have no login, the Task ID is
+// their only credential -- so it returns NO presigned URLs. Handing out working links
+// to every photo on a task to anyone who can guess a 9-digit ID is not a trade worth
+// making for a progress counter, which is all the resume logic actually needs.
+// Media playback lives behind admin auth (GET /api/admin/tasks/:taskId/media).
 tasksRouter.get('/:taskId/media', async (req, res) => {
     const { taskId } = req.params;
+    if (!isValidTaskId(taskId)) {
+        res.status(400).json({ error: 'taskId must be numeric' });
+        return;
+    }
+
     const task = await getTaskById(taskId);
     if (!task) {
         res.status(404).json({ error: `No task found for ID ${taskId}` });
@@ -63,16 +74,11 @@ tasksRouter.get('/:taskId/media', async (req, res) => {
 
     const media = await getTaskMedia(taskId);
     res.json({
-        // Presigned so the rep can review what they've already captured. The stored
-        // s3_url points at a private bucket and would return 403 if handed out directly.
-        media: await Promise.all(
-            media.map(async (m) => ({
-                mediaType: m.media_type,
-                sequenceNumber: m.sequence_number,
-                url: await createPresignedDownloadUrl(m.s3_key),
-                directionCardinal: m.direction_cardinal,
-                capturedAt: m.captured_at,
-            })),
-        ),
+        media: media.map((m) => ({
+            mediaType: m.media_type,
+            sequenceNumber: m.sequence_number,
+            directionCardinal: m.direction_cardinal,
+            capturedAt: m.captured_at,
+        })),
     });
 });
