@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { headingToCardinal } from '../utils/geo';
+import { headingToCardinal } from '@/utils/geo';
 
 // iOS Safari exposes compass heading via a non-standard field and requires an
 // explicit user-gesture permission prompt; other browsers expose it via the

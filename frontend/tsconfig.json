@@ -13,7 +13,9 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    // No baseUrl: it is deprecated, and paths resolve relative to this file.
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
 }

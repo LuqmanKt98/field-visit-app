@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { drawStamp } from '../utils/stamp';
-import { pickRecordingFormat, toContentType } from '../utils/recording';
+import { Camera, Compass, Loader2, Square, Video } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Alert } from '@/components/ui/feedback';
+import { drawStamp } from '@/utils/stamp';
+import { pickRecordingFormat, toContentType } from '@/utils/recording';
 
 const MAX_VIDEO_SECONDS = 120;
 
@@ -12,6 +15,9 @@ interface CaptureStageProps {
     cameraError: string | null;
     disabled: boolean;
     busy: boolean;
+    /** Used to label the shot the rep is about to take ("Photo 4 of 10"). */
+    photosDone: number;
+    totalPhotos: number;
     onPhotoCaptured: (blob: Blob, contentType: 'image/jpeg') => void;
     onVideoRecorded: (blob: Blob, contentType: 'video/webm' | 'video/mp4') => void;
 }
@@ -23,6 +29,8 @@ export function CaptureStage({
     cameraError,
     disabled,
     busy,
+    photosDone,
+    totalPhotos,
     onPhotoCaptured,
     onVideoRecorded,
 }: CaptureStageProps) {
@@ -194,55 +202,109 @@ export function CaptureStage({
     }
 
     if (cameraError) {
-        return <div className="capture-error">Camera unavailable: {cameraError}</div>;
+        return (
+            <Alert variant="destructive">
+                <strong className="font-semibold">Camera unavailable</strong>
+                <p className="mt-0.5">{cameraError}</p>
+            </Alert>
+        );
     }
 
     const streamNotReady = !stream;
+    const remaining = totalPhotos - photosDone;
+    const shotNumber = Math.min(photosDone + 1, totalPhotos);
 
     return (
-        <div className="capture-stage">
-            <div className="capture-preview">
-                <video ref={videoRef} autoPlay playsInline muted className="capture-video" />
-                <div className="capture-overlay">
-                    <span>{cardinal ?? '—'}</span>
-                    <span>{clock.toLocaleTimeString()}</span>
-                </div>
-                {recording && (
-                    <div className="capture-recording-badge">
-                        REC {recordingSeconds}s / {MAX_VIDEO_SECONDS}s
+        <div className="space-y-3">
+            <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border bg-slate-900">
+                <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+
+                {mode === 'photo' && !streamNotReady && (
+                    <div className="absolute left-3 top-3 rounded-full bg-slate-900/70 px-3 py-1.5 text-xs font-bold text-white backdrop-blur-sm">
+                        Photo {shotNumber} of {totalPhotos}
                     </div>
                 )}
-                {streamNotReady && <div className="capture-waiting">Starting camera…</div>}
-            </div>
-            <canvas ref={recordCanvasRef} style={{ display: 'none' }} />
 
-            {recordError && <p className="error-text">{recordError}</p>}
+                {/* Mirrors what is being burned into the file, so the rep can confirm
+                    the stamp is right before pressing the button. */}
+                <div className="absolute bottom-3 left-3 flex gap-3 rounded-lg bg-slate-900/70 px-3 py-1.5 text-xs font-semibold tabular-nums text-white backdrop-blur-sm">
+                    <span className="flex items-center gap-1">
+                        <Compass className="h-3.5 w-3.5" aria-hidden="true" />
+                        {cardinal ?? '—'}
+                    </span>
+                    <span>{clock.toLocaleTimeString()}</span>
+                </div>
+
+                {recording && (
+                    <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-destructive px-3 py-1.5 text-xs font-bold text-white">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-white" aria-hidden="true" />
+                        {recordingSeconds}s / {MAX_VIDEO_SECONDS}s
+                    </div>
+                )}
+
+                {streamNotReady && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/70 text-sm font-medium text-white">
+                        <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                        Starting camera…
+                    </div>
+                )}
+            </div>
+
+            <canvas ref={recordCanvasRef} className="hidden" />
+
+            {recordError && <Alert variant="destructive">{recordError}</Alert>}
 
             {mode === 'photo' && (
-                <button
-                    type="button"
-                    className="btn btn-primary btn-capture"
-                    disabled={disabled || busy || streamNotReady}
-                    onClick={handleTakePhoto}
-                >
-                    {busy ? 'Uploading…' : 'Take Photo'}
-                </button>
+                <>
+                    <p className="text-center text-sm text-muted-foreground">
+                        {remaining === totalPhotos
+                            ? 'Stand back so the whole property is in frame.'
+                            : remaining === 1
+                              ? 'Last photo — then a short video.'
+                              : `${remaining} photos to go. Move around for a different angle each time.`}
+                    </p>
+                    <Button
+                        size="capture"
+                        disabled={disabled || streamNotReady}
+                        loading={busy}
+                        loadingText={`Uploading photo ${photosDone + 1}…`}
+                        onClick={handleTakePhoto}
+                    >
+                        <Camera className="h-5 w-5" aria-hidden="true" />
+                        Take photo {shotNumber}
+                    </Button>
+                </>
             )}
 
             {mode === 'video' && !recording && (
-                <button
-                    type="button"
-                    className="btn btn-primary btn-capture"
-                    disabled={disabled || busy || streamNotReady}
-                    onClick={startRecording}
-                >
-                    {busy ? 'Uploading…' : 'Start Recording'}
-                </button>
+                <>
+                    <p className="text-center text-sm text-muted-foreground">
+                        All photos done. Now record a short walk-around video — up to {MAX_VIDEO_SECONDS}{' '}
+                        seconds.
+                    </p>
+                    <Button
+                        size="capture"
+                        disabled={disabled || streamNotReady}
+                        loading={busy}
+                        loadingText="Uploading video…"
+                        onClick={startRecording}
+                    >
+                        <Video className="h-5 w-5" aria-hidden="true" />
+                        Start recording
+                    </Button>
+                </>
             )}
+
             {mode === 'video' && recording && (
-                <button type="button" className="btn btn-danger btn-capture" onClick={stopRecording}>
-                    Stop Recording ({recordingSeconds}s)
-                </button>
+                <>
+                    <p className="text-center text-sm text-muted-foreground">
+                        Recording — walk slowly around the property.
+                    </p>
+                    <Button size="capture" variant="destructive" onClick={stopRecording}>
+                        <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+                        Stop recording ({recordingSeconds}s)
+                    </Button>
+                </>
             )}
         </div>
     );

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useGoogleMaps } from '../hooks/useGoogleMaps';
-import { TaskLocation } from '../types';
+import { useGoogleMaps } from '@/hooks/useGoogleMaps';
+import { TaskLocation } from '@/types';
 
 interface MapViewProps {
     propertyLocation: TaskLocation;
@@ -85,8 +85,21 @@ export function MapView({ propertyLocation, repLocation }: MapViewProps) {
     }, [loaded, repLocation, propertyLocation]);
 
     if (error) {
-        return <div className="map-fallback">Map unavailable: {error}</div>;
+        return (
+            <div className="bg-muted p-4 text-center text-sm text-muted-foreground">
+                Map unavailable: {error}
+            </div>
+        );
     }
 
-    return <div ref={containerRef} className="map-view" role="img" aria-label="Map showing property and your location" />;
+    // An explicit height is required: Google Maps renders into this element, and with
+    // no height it collapses to nothing.
+    return (
+        <div
+            ref={containerRef}
+            className="h-52 w-full bg-muted"
+            role="img"
+            aria-label="Map showing the property and your location"
+        />
+    );
 }

@@ -88,6 +88,8 @@ export interface AdminUserRow {
     username: string;
     email: string;
     password_hash: string;
+    must_change_password: boolean;
+    password_changed_at: Date | null;
     created_timestamp: Date;
 }
 

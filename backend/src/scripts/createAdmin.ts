@@ -12,6 +12,7 @@ async function main(): Promise<void> {
 
     const admin = await createAdmin(username, email, password);
     console.log(`Created admin user: ${admin.username} (${admin.email})`);
+    console.log('They will be asked to choose their own password when they first sign in.');
 }
 
 main()

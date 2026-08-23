@@ -1,11 +1,11 @@
-import { config } from '../config/config';
+import { config } from '@/config/config';
 import {
     AdminTaskSummary,
     TaskDetails,
     TaskMediaItem,
     TaskMediaProgressItem,
     UploadMediaResponse,
-} from '../types';
+} from '@/types';
 
 class ApiError extends Error {
     constructor(
@@ -104,11 +104,34 @@ export async function uploadMedia(args: UploadMediaArgs): Promise<UploadMediaRes
     });
 }
 
-export function adminLogin(username: string, password: string): Promise<{ token: string; admin: { id: string; username: string; email: string } }> {
+export interface AdminIdentity {
+    id: string;
+    username: string;
+    email: string;
+    mustChangePassword: boolean;
+}
+
+export function adminLogin(
+    username: string,
+    password: string,
+): Promise<{ token: string; admin: AdminIdentity }> {
     return request('/admin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
+    });
+}
+
+/** Returns a fresh token, since the old one may carry a stale must-change flag. */
+export function changeAdminPassword(
+    token: string,
+    currentPassword: string,
+    newPassword: string,
+): Promise<{ token: string; admin: AdminIdentity }> {
+    return request('/admin/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword, newPassword }),
     });
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { config } from '../config/config';
+import { config } from '@/config/config';
 
 declare global {
     interface Window {
