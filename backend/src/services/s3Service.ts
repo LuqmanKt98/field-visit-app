@@ -5,6 +5,7 @@ import {
     PutObjectCommand,
     PutPublicAccessBlockCommand,
     PutBucketCorsCommand,
+    PutBucketEncryptionCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config';
@@ -17,6 +18,13 @@ const s3Client = new S3Client({
               secretAccessKey: config.aws.secretAccessKey,
           }
         : undefined, // falls back to the default AWS credential chain (e.g. IAM role) if unset
+
+    // Since v3.729 the SDK adds a CRC32 checksum to PutObject by default. When
+    // presigning, that checksum is computed over an empty body and baked into the
+    // signature, so the browser's later PUT of the real file always fails with
+    // SignatureDoesNotMatch. WHEN_REQUIRED keeps checksums off unless an operation
+    // actually mandates them, which is what makes presigned uploads work.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 
 let bucketReadyPromise: Promise<void> | null = null;
@@ -52,19 +60,42 @@ async function ensureBucketExists(): Promise<void> {
                             : {}),
                     }),
                 );
-
-                await s3Client.send(
-                    new PutPublicAccessBlockCommand({
-                        Bucket: config.aws.bucketName,
-                        PublicAccessBlockConfiguration: {
-                            BlockPublicAcls: true,
-                            IgnorePublicAcls: true,
-                            BlockPublicPolicy: true,
-                            RestrictPublicBuckets: true,
-                        },
-                    }),
-                );
             }
+
+            // The settings below are applied on every cold start rather than only at
+            // creation time: they're idempotent, and doing it this way means a bucket
+            // that already exists (or drifted in the console) is corrected instead of
+            // silently keeping the wrong policy.
+            await s3Client.send(
+                new PutPublicAccessBlockCommand({
+                    Bucket: config.aws.bucketName,
+                    PublicAccessBlockConfiguration: {
+                        BlockPublicAcls: true,
+                        IgnorePublicAcls: true,
+                        BlockPublicPolicy: true,
+                        RestrictPublicBuckets: true,
+                    },
+                }),
+            );
+
+            // Encryption at rest is set as a bucket-level default rather than a
+            // per-object header. A presigned URL can only carry headers the browser
+            // will actually send (it sends just Content-Type), so requiring
+            // x-amz-server-side-encryption per object would break the upload. The
+            // bucket default applies to every object regardless of how it arrives.
+            await s3Client.send(
+                new PutBucketEncryptionCommand({
+                    Bucket: config.aws.bucketName,
+                    ServerSideEncryptionConfiguration: {
+                        Rules: [
+                            {
+                                ApplyServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' },
+                                BucketKeyEnabled: true,
+                            },
+                        ],
+                    },
+                }),
+            );
 
             await s3Client.send(
                 new PutBucketCorsCommand({
@@ -108,12 +139,14 @@ export async function createPresignedUploadUrl({
 }: PresignedUploadParams): Promise<PresignedUploadResult> {
     await ensureBucketExists();
 
+    // Only Content-Type is signed here -- it's the one header the browser sends on
+    // its PUT. Anything else signed (encryption, checksums) would have to be
+    // reproduced exactly by the browser or the signature check fails.
     const key = `${taskId}/${fileName}`;
     const command = new PutObjectCommand({
         Bucket: config.aws.bucketName,
         Key: key,
         ContentType: contentType,
-        ServerSideEncryption: 'AES256',
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, {
