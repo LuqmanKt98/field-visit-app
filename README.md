@@ -51,6 +51,19 @@ tables were needed beyond that schema:
   and validate 10 photos + 1 video individually.
 - `admin_users` — admin login credentials (not in the original schema).
 
+### One deviation from the supplied schema
+
+`004_widen_url_columns.sql` widens `CLOUD_URL`, `FOLDER_URL` and `WEB_URL` from
+`VARCHAR(75)` to `VARCHAR(500)`. A real S3 folder URL doesn't fit in 75 characters —
+
+```
+https://assetlookout-field-visit-media.s3.ap-south-1.amazonaws.com/345667896/   (77 chars)
+```
+
+— so the first photo upload failed with `value too long for type character varying(75)`.
+Widening a varchar is non-destructive (nothing is rewritten or truncated), so it is
+safe to apply to an existing populated table.
+
 ## Local setup
 
 ### Backend
@@ -64,8 +77,19 @@ npm run create-admin -- <username> <email> <password>   # repeat for the 2nd adm
 npm run dev                # http://localhost:4000
 ```
 
-To try it without AWS: seed a sample task with `backend/src/db/seed.sql`
-(`psql $DATABASE_URL -f src/db/seed.sql`) using Task ID `345667896`.
+Seed a sample task (1 MG Road, Bengaluru — Task ID `345667896`) with
+`psql $DATABASE_URL -f src/db/seed.sql`.
+
+To confirm AWS is wired up correctly — presign, a real browser-style `PUT`, and the
+bucket's CORS policy — run:
+
+```bash
+npm run verify-s3
+```
+
+Re-run it after changing AWS credentials, region, bucket name, or `CORS_ORIGIN`
+(especially after deploying, since the bucket CORS policy is derived from
+`CORS_ORIGIN` and a mismatch only shows up in a real browser).
 
 ### Frontend
 
@@ -92,6 +116,9 @@ mirrored for UI display in `frontend/src/config/config.ts`:
 | `REQUIRED_PHOTO_COUNT` | 10 | Photos required to complete a task |
 | `REQUIRED_VIDEO_COUNT` | 1 | Videos required to complete a task |
 | `ENFORCE_SERVER_SIDE_DISTANCE_CHECK` | true | Re-validates distance server-side on every upload |
+
+`AWS_REGION` is set to `ap-south-1` (Mumbai): the app launches in India first, so
+keeping the bucket in-region minimises upload latency for reps in the field.
 
 ## Deployment notes
 
