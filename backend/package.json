@@ -13,7 +13,9 @@
     "provision-s3": "tsx src/scripts/provisionS3.ts",
     "verify-s3": "tsx src/scripts/verifyS3.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude \"**/*.integration.test.ts\"",
+    "test:integration": "vitest run src/routes/media.integration.test.ts",
+    "test:all": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.687.0",
