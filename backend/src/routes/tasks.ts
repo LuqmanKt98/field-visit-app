@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getTaskById, getTaskMedia } from '../services/taskService';
+import { createPresignedDownloadUrl } from '../services/s3Service';
 import { config } from '../config';
 
 export const tasksRouter = Router();
@@ -62,12 +63,16 @@ tasksRouter.get('/:taskId/media', async (req, res) => {
 
     const media = await getTaskMedia(taskId);
     res.json({
-        media: media.map((m) => ({
-            mediaType: m.media_type,
-            sequenceNumber: m.sequence_number,
-            url: m.s3_url,
-            directionCardinal: m.direction_cardinal,
-            capturedAt: m.captured_at,
-        })),
+        // Presigned so the rep can review what they've already captured. The stored
+        // s3_url points at a private bucket and would return 403 if handed out directly.
+        media: await Promise.all(
+            media.map(async (m) => ({
+                mediaType: m.media_type,
+                sequenceNumber: m.sequence_number,
+                url: await createPresignedDownloadUrl(m.s3_key),
+                directionCardinal: m.direction_cardinal,
+                capturedAt: m.captured_at,
+            })),
+        ),
     });
 });

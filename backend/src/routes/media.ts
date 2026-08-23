@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
-import { haversineDistanceMeters } from '../utils/geo';
-import { createPresignedUploadUrl, taskFolderUrl } from '../services/s3Service';
+import { haversineDistanceMeters, headingToCardinal } from '../utils/geo';
+import { createPresignedUploadUrl, getUploadedObjectSize, taskFolderUrl } from '../services/s3Service';
 import {
     getTaskById,
     getTaskMedia,
@@ -11,19 +11,9 @@ import {
     setTaskStatus,
 } from '../services/taskService';
 import { TaskStatus } from '../types';
+import { contentTypeMatchesMedia, fileNameFor } from '../utils/mediaTypes';
 
 export const mediaRouter = Router();
-
-function directionToCardinal(degrees: number): string {
-    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-    return dirs[Math.round(((degrees % 360) + 360) % 360 / 45) % 8];
-}
-
-function fileNameFor(mediaType: 'photo' | 'video', sequenceNumber: number, contentType: string): string {
-    if (mediaType === 'video') return 'video.webm';
-    const extension = contentType === 'image/png' ? 'png' : 'jpg';
-    return `photo_${sequenceNumber}.${extension}`;
-}
 
 async function assertUploadAllowed(taskId: string, latitude: number, longitude: number) {
     const task = await getTaskById(taskId);
@@ -55,7 +45,7 @@ async function assertUploadAllowed(taskId: string, latitude: number, longitude: 
 const presignBodySchema = z.object({
     mediaType: z.enum(['photo', 'video']),
     sequenceNumber: z.coerce.number().int().min(1),
-    contentType: z.enum(['image/jpeg', 'image/png', 'video/webm']),
+    contentType: z.enum(['image/jpeg', 'image/png', 'video/webm', 'video/mp4']),
     latitude: z.coerce.number().min(-90).max(90),
     longitude: z.coerce.number().min(-180).max(180),
 });
@@ -75,6 +65,11 @@ mediaRouter.post('/:taskId/media/presign', async (req, res) => {
     const maxSequence = mediaType === 'photo' ? config.fieldVisit.requiredPhotoCount : config.fieldVisit.requiredVideoCount;
     if (sequenceNumber > maxSequence) {
         res.status(400).json({ error: `sequenceNumber for ${mediaType} must be between 1 and ${maxSequence}` });
+        return;
+    }
+
+    if (!contentTypeMatchesMedia(mediaType, contentType)) {
+        res.status(400).json({ error: `contentType ${contentType} is not valid for mediaType ${mediaType}` });
         return;
     }
 
@@ -98,7 +93,6 @@ const confirmBodySchema = z.object({
     latitude: z.coerce.number().min(-90).max(90),
     longitude: z.coerce.number().min(-180).max(180),
     capturedAt: z.string().datetime().optional(),
-    fileSizeBytes: z.coerce.number().int().min(0),
 });
 
 // POST /api/tasks/:taskId/media/confirm
@@ -111,7 +105,7 @@ mediaRouter.post('/:taskId/media/confirm', async (req, res) => {
         res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
         return;
     }
-    const { mediaType, sequenceNumber, key, directionDegrees, latitude, longitude, capturedAt, fileSizeBytes } = parsed.data;
+    const { mediaType, sequenceNumber, key, directionDegrees, latitude, longitude, capturedAt } = parsed.data;
 
     if (!key.startsWith(`${taskId}/`)) {
         res.status(400).json({ error: 'key does not belong to this task' });
@@ -125,6 +119,16 @@ mediaRouter.post('/:taskId/media/confirm', async (req, res) => {
     }
     const task = check.task!;
 
+    // The bytes went browser -> S3 without passing through here, so confirm with S3
+    // that the object actually exists before counting it. Otherwise a task could be
+    // marked complete while files are missing. The size is read back from S3 rather
+    // than taken from the request for the same reason.
+    const fileSizeBytes = await getUploadedObjectSize(key);
+    if (fileSizeBytes === null) {
+        res.status(409).json({ error: 'That file is not in storage yet -- the upload did not complete. Please retry.' });
+        return;
+    }
+
     const fileUrl = `https://${config.aws.bucketName}.s3.${config.aws.region}.amazonaws.com/${key}`;
 
     await insertTaskMedia({
@@ -135,7 +139,7 @@ mediaRouter.post('/:taskId/media/confirm', async (req, res) => {
         s3Key: key,
         s3Url: fileUrl,
         directionDegrees: directionDegrees ?? null,
-        directionCardinal: directionDegrees !== undefined ? directionToCardinal(directionDegrees) : null,
+        directionCardinal: directionDegrees !== undefined ? headingToCardinal(directionDegrees) : null,
         capturedLatitude: latitude,
         capturedLongitude: longitude,
         capturedAt: capturedAt ? new Date(capturedAt) : new Date(),

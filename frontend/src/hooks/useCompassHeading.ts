@@ -34,28 +34,32 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
     const [heading, setHeading] = useState<number | null>(null);
     const [needsPermissionRequest, setNeedsPermissionRequest] = useState(false);
     const [permissionDenied, setPermissionDenied] = useState(false);
+    // Flipped once iOS grants permission, which re-runs the attach effect below.
+    const [listening, setListening] = useState(false);
 
-    const attachListener = useCallback(() => {
+    useEffect(() => {
+        const OrientationEventCtor = window.DeviceOrientationEvent as OrientationPermissionEvent | undefined;
+        // iOS requires an explicit, user-gesture-triggered permission request; other
+        // browsers can attach immediately.
+        if (OrientationEventCtor?.requestPermission && !listening) {
+            setNeedsPermissionRequest(true);
+            return;
+        }
+
         const handler = (event: Event) => {
             const value = readHeading(event as IOSDeviceOrientationEvent);
             if (value !== null) setHeading(value);
         };
         window.addEventListener('deviceorientationabsolute', handler);
         window.addEventListener('deviceorientation', handler);
+        // Attaching inside the effect (rather than from the permission callback) is what
+        // guarantees these are torn down again -- a listener attached from the callback
+        // had no cleanup path and leaked.
         return () => {
             window.removeEventListener('deviceorientationabsolute', handler);
             window.removeEventListener('deviceorientation', handler);
         };
-    }, []);
-
-    useEffect(() => {
-        const OrientationEventCtor = window.DeviceOrientationEvent as OrientationPermissionEvent | undefined;
-        if (OrientationEventCtor?.requestPermission) {
-            setNeedsPermissionRequest(true);
-            return;
-        }
-        return attachListener();
-    }, [attachListener]);
+    }, [listening]);
 
     const requestPermission = useCallback(async () => {
         const OrientationEventCtor = window.DeviceOrientationEvent as OrientationPermissionEvent | undefined;
@@ -64,14 +68,14 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
             const result = await OrientationEventCtor.requestPermission();
             if (result === 'granted') {
                 setNeedsPermissionRequest(false);
-                attachListener();
+                setListening(true);
             } else {
                 setPermissionDenied(true);
             }
         } catch {
             setPermissionDenied(true);
         }
-    }, [attachListener]);
+    }, []);
 
     return {
         headingDegrees: heading,

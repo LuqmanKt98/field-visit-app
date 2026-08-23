@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdminAuth } from '../middleware/adminAuth';
 import { getTaskMedia, listTasksForAdmin } from '../services/taskService';
+import { createPresignedDownloadUrl } from '../services/s3Service';
+import { config } from '../config';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdminAuth);
@@ -45,15 +47,23 @@ adminRouter.get('/tasks', async (req, res) => {
 });
 
 // GET /api/admin/tasks/:taskId/media
+// Returns short-lived presigned URLs. The bucket blocks all public access, so the
+// stored s3_url is a 403 for anyone who opens it -- viewing has to be signed.
 adminRouter.get('/tasks/:taskId/media', async (req, res) => {
     const media = await getTaskMedia(req.params.taskId);
     res.json({
-        media: media.map((m) => ({
-            mediaType: m.media_type,
-            sequenceNumber: m.sequence_number,
-            url: m.s3_url,
-            directionCardinal: m.direction_cardinal,
-            capturedAt: m.captured_at,
-        })),
+        media: await Promise.all(
+            media.map(async (m) => ({
+                mediaType: m.media_type,
+                sequenceNumber: m.sequence_number,
+                url: await createPresignedDownloadUrl(m.s3_key),
+                directionCardinal: m.direction_cardinal,
+                capturedAt: m.captured_at,
+                fileSizeBytes: m.file_size_bytes === null ? null : Number(m.file_size_bytes),
+                capturedLatitude: m.captured_latitude === null ? null : Number(m.captured_latitude),
+                capturedLongitude: m.captured_longitude === null ? null : Number(m.captured_longitude),
+            })),
+        ),
+        expiresInSeconds: config.aws.presignedUrlExpirySeconds,
     });
 });

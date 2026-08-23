@@ -25,7 +25,15 @@ upload straight to AWS S3. Admins log in separately to browse/search all tasks.
 7. Once 10 photos + 1 video are stored, the task is marked complete and the app shows
    "The task is complete, you can leave the field."
 8. Admins sign in at `/admin/login` and browse all tasks at `/admin`, sortable by
-   created/updated date or searchable by Task ID.
+   created/updated date or searchable by Task ID, with a **View** action that opens the
+   captured photos and video for that task.
+
+The camera is only opened once the rep is inside the unlock radius, and is released
+again if they move away — the phone doesn't hold the camera open for the whole visit.
+
+Because the bucket blocks all public access, anything that displays media (the admin
+gallery, and the rep reviewing their own captures) is served through short-lived
+presigned GET URLs. Raw `https://bucket.s3….amazonaws.com/…` links return 403.
 
 ## Stack
 
@@ -161,10 +169,13 @@ what makes the whole app deployable on Vercel.
 
 ## Known limitations
 
-- Video is recorded as WebM (`MediaRecorder` output) rather than MP4 — this is a
-  browser API constraint (native MP4 recording isn't reliably supported across
-  Android Chrome/iOS Safari yet). S3 lifecycle rules and any downstream viewer should
-  expect `.webm` for the video file.
-- Compass heading (`DeviceOrientationEvent`) accuracy depends on the phone's
-  magnetometer and calibration; there's no way to unit-test this without a physical
-  device in the field.
+- **Video container varies by platform.** `MediaRecorder` produces WebM on
+  Android/desktop Chrome and MP4 on iOS Safari; the app probes what the browser
+  supports and stores whichever it gets, so the video file is either `video.webm` or
+  `video.mp4`. S3 lifecycle rules and any downstream viewer should expect both.
+- **Compass accuracy is device-dependent.** `DeviceOrientationEvent` relies on the
+  phone's magnetometer and calibration, and iOS additionally requires a user gesture to
+  grant access. If the compass is unavailable the photo still uploads, but without a
+  direction stamp — this can't be meaningfully tested without a physical device.
+- **Camera and GPS require HTTPS** on a real device. Both are fine on the Vercel
+  deployment; locally they work on `localhost` only.

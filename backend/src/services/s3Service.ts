@@ -3,6 +3,8 @@ import {
     HeadBucketCommand,
     CreateBucketCommand,
     PutObjectCommand,
+    GetObjectCommand,
+    HeadObjectCommand,
     PutPublicAccessBlockCommand,
     PutBucketCorsCommand,
     PutBucketEncryptionCommand,
@@ -159,6 +161,43 @@ export async function createPresignedUploadUrl({
         key,
         fileUrl: `https://${config.aws.bucketName}.s3.${config.aws.region}.amazonaws.com/${key}`,
     };
+}
+
+/**
+ * Confirms an object is really in the bucket, returning its size (or null if absent).
+ *
+ * The browser uploads straight to S3, so the API never sees the bytes. Without this
+ * check a client could call /media/confirm having uploaded nothing and the task would
+ * be marked complete with missing files -- the requirement is that the task completes
+ * only once the media is *stored successfully*.
+ */
+export async function getUploadedObjectSize(key: string): Promise<number | null> {
+    try {
+        const head = await s3Client.send(
+            new HeadObjectCommand({ Bucket: config.aws.bucketName, Key: key }),
+        );
+        return head.ContentLength ?? 0;
+    } catch (err) {
+        const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+        if (status === 404 || status === 403) return null;
+        throw err;
+    }
+}
+
+/**
+ * Short-lived URL for *viewing* a stored photo/video.
+ *
+ * The bucket is private (public access is fully blocked), so a raw
+ * https://bucket.s3.region.amazonaws.com/... link returns 403 AccessDenied. Anything
+ * that needs to display media -- the admin dashboard in particular -- has to go
+ * through a presigned GET like this one.
+ */
+export async function createPresignedDownloadUrl(key: string): Promise<string> {
+    return getSignedUrl(
+        s3Client,
+        new GetObjectCommand({ Bucket: config.aws.bucketName, Key: key }),
+        { expiresIn: config.aws.presignedUrlExpirySeconds },
+    );
 }
 
 /** Folder-level URL stored on tasks_field.cloud_url once the task has media. */

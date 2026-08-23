@@ -36,11 +36,13 @@ export function getTaskMedia(taskId: string): Promise<{ media: TaskMediaItem[] }
     return request(`/tasks/${encodeURIComponent(taskId)}/media`);
 }
 
+export type UploadContentType = 'image/jpeg' | 'image/png' | 'video/webm' | 'video/mp4';
+
 export interface UploadMediaArgs {
     taskId: string;
     mediaType: 'photo' | 'video';
     sequenceNumber: number;
-    contentType: 'image/jpeg' | 'image/png' | 'video/webm';
+    contentType: UploadContentType;
     directionDegrees?: number;
     latitude: number;
     longitude: number;
@@ -90,7 +92,6 @@ export async function uploadMedia(args: UploadMediaArgs): Promise<UploadMediaRes
             latitude: args.latitude,
             longitude: args.longitude,
             capturedAt: args.capturedAt,
-            fileSizeBytes: args.file.size,
         }),
     });
 }
@@ -111,10 +112,17 @@ export interface AdminTaskListParams {
     pageSize: number;
 }
 
+export interface AdminPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
 export function listAdminTasks(
     token: string,
     params: AdminTaskListParams,
-): Promise<{ tasks: AdminTaskSummary[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> {
+): Promise<{ tasks: AdminTaskSummary[]; pagination: AdminPagination }> {
     const query = new URLSearchParams({
         sortBy: params.sortBy,
         sortDir: params.sortDir,
@@ -123,6 +131,19 @@ export function listAdminTasks(
         ...(params.search ? { search: params.search } : {}),
     });
     return request(`/admin/tasks?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+}
+
+/**
+ * Media for one task, as short-lived presigned URLs that can actually be displayed.
+ * The bucket is private, so the stored S3 links return 403 on their own.
+ */
+export function getAdminTaskMedia(
+    token: string,
+    taskId: string,
+): Promise<{ media: TaskMediaItem[]; expiresInSeconds: number }> {
+    return request(`/admin/tasks/${encodeURIComponent(taskId)}/media`, {
         headers: { Authorization: `Bearer ${token}` },
     });
 }

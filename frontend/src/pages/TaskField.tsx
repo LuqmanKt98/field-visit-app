@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { MapView } from '../components/MapView';
 import { CaptureStage } from '../components/CaptureStage';
@@ -6,9 +6,20 @@ import { ProgressTracker } from '../components/ProgressTracker';
 import { CompletionScreen } from '../components/CompletionScreen';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { useCompassHeading } from '../hooks/useCompassHeading';
-import { ApiError, getTask, getTaskMedia, uploadMedia } from '../services/api';
+import { useCameraStream } from '../hooks/useCameraStream';
+import { ApiError, getTask, getTaskMedia, uploadMedia, UploadContentType } from '../services/api';
 import { formatDistance, haversineDistanceMeters } from '../utils/geo';
 import { TaskDetails, TaskStatus } from '../types';
+
+/** A capture that failed to upload, held so the rep can retry without reshooting. */
+interface PendingCapture {
+    blob: Blob;
+    contentType: UploadContentType;
+    mediaType: 'photo' | 'video';
+    sequenceNumber: number;
+    directionDegrees?: number;
+    capturedAt: string;
+}
 
 export function TaskField() {
     const { taskId = '' } = useParams();
@@ -19,9 +30,12 @@ export function TaskField() {
     const [taskComplete, setTaskComplete] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [pending, setPending] = useState<PendingCapture | null>(null);
 
     const geolocation = useGeolocation();
     const compass = useCompassHeading();
+    // Guards against a double-tap firing two uploads for the same sequence number.
+    const inFlightRef = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -46,62 +60,83 @@ export function TaskField() {
 
     const distanceMeters = useMemo(() => {
         if (!task?.location || geolocation.latitude === null || geolocation.longitude === null) return null;
-        return haversineDistanceMeters(geolocation.latitude, geolocation.longitude, task.location.latitude, task.location.longitude);
+        return haversineDistanceMeters(
+            geolocation.latitude,
+            geolocation.longitude,
+            task.location.latitude,
+            task.location.longitude,
+        );
     }, [task, geolocation.latitude, geolocation.longitude]);
 
-    const cameraUnlocked = task !== null && distanceMeters !== null && distanceMeters <= task.cameraUnlockDistanceMeters;
+    const cameraUnlocked =
+        task !== null && distanceMeters !== null && distanceMeters <= task.cameraUnlockDistanceMeters;
 
-    async function handlePhotoCaptured(blob: Blob): Promise<void> {
-        if (!task || geolocation.latitude === null || geolocation.longitude === null) return;
-        setUploading(true);
-        setUploadError(null);
-        try {
-            const nextSequence = photosCaptured + 1;
-            const result = await uploadMedia({
-                taskId,
-                mediaType: 'photo',
-                sequenceNumber: nextSequence,
-                contentType: 'image/jpeg',
-                directionDegrees: compass.headingDegrees ?? undefined,
-                latitude: geolocation.latitude,
-                longitude: geolocation.longitude,
-                capturedAt: new Date().toISOString(),
-                file: blob,
-            });
-            setPhotosCaptured(result.uploadedCounts.photos);
-            setVideoCaptured(result.uploadedCounts.video);
-            if (result.taskComplete) setTaskComplete(true);
-        } catch (err) {
-            setUploadError(err instanceof ApiError ? err.message : 'Upload failed. Please try again.');
-        } finally {
-            setUploading(false);
-        }
+    // The camera is only opened once the rep is actually within range, and is released
+    // again if they walk away -- it is not held open for the whole visit.
+    const camera = useCameraStream(cameraUnlocked && !taskComplete);
+
+    const send = useCallback(
+        async (capture: PendingCapture): Promise<void> => {
+            if (inFlightRef.current) return;
+            if (geolocation.latitude === null || geolocation.longitude === null) {
+                setUploadError('Waiting for your location. Please try again in a moment.');
+                return;
+            }
+
+            inFlightRef.current = true;
+            setUploading(true);
+            setUploadError(null);
+            try {
+                const result = await uploadMedia({
+                    taskId,
+                    mediaType: capture.mediaType,
+                    sequenceNumber: capture.sequenceNumber,
+                    contentType: capture.contentType,
+                    directionDegrees: capture.directionDegrees,
+                    latitude: geolocation.latitude,
+                    longitude: geolocation.longitude,
+                    capturedAt: capture.capturedAt,
+                    file: capture.blob,
+                });
+                setPhotosCaptured(result.uploadedCounts.photos);
+                setVideoCaptured(result.uploadedCounts.video);
+                setPending(null);
+                if (result.taskComplete) setTaskComplete(true);
+            } catch (err) {
+                // Hold on to the capture so "Retry" can resend the exact same file --
+                // otherwise a dropped connection would cost the rep a reshoot.
+                setPending(capture);
+                setUploadError(
+                    err instanceof ApiError ? err.message : 'Upload failed. Check your signal and retry.',
+                );
+            } finally {
+                inFlightRef.current = false;
+                setUploading(false);
+            }
+        },
+        [taskId, geolocation.latitude, geolocation.longitude],
+    );
+
+    function handlePhotoCaptured(blob: Blob, contentType: 'image/jpeg'): void {
+        void send({
+            blob,
+            contentType,
+            mediaType: 'photo',
+            sequenceNumber: photosCaptured + 1,
+            directionDegrees: compass.headingDegrees ?? undefined,
+            capturedAt: new Date().toISOString(),
+        });
     }
 
-    async function handleVideoRecorded(blob: Blob): Promise<void> {
-        if (!task || geolocation.latitude === null || geolocation.longitude === null) return;
-        setUploading(true);
-        setUploadError(null);
-        try {
-            const result = await uploadMedia({
-                taskId,
-                mediaType: 'video',
-                sequenceNumber: 1,
-                contentType: 'video/webm',
-                directionDegrees: compass.headingDegrees ?? undefined,
-                latitude: geolocation.latitude,
-                longitude: geolocation.longitude,
-                capturedAt: new Date().toISOString(),
-                file: blob,
-            });
-            setPhotosCaptured(result.uploadedCounts.photos);
-            setVideoCaptured(result.uploadedCounts.video);
-            if (result.taskComplete) setTaskComplete(true);
-        } catch (err) {
-            setUploadError(err instanceof ApiError ? err.message : 'Upload failed. Please try again.');
-        } finally {
-            setUploading(false);
-        }
+    function handleVideoRecorded(blob: Blob, contentType: 'video/webm' | 'video/mp4'): void {
+        void send({
+            blob,
+            contentType,
+            mediaType: 'video',
+            sequenceNumber: 1,
+            directionDegrees: compass.headingDegrees ?? undefined,
+            capturedAt: new Date().toISOString(),
+        });
     }
 
     if (loadError) {
@@ -142,7 +177,16 @@ export function TaskField() {
                 <p className="muted">{task.address.fullAddress}</p>
             </header>
 
-            {task.location && <MapView propertyLocation={task.location} repLocation={geolocation.latitude !== null && geolocation.longitude !== null ? { latitude: geolocation.latitude, longitude: geolocation.longitude } : null} />}
+            {task.location && (
+                <MapView
+                    propertyLocation={task.location}
+                    repLocation={
+                        geolocation.latitude !== null && geolocation.longitude !== null
+                            ? { latitude: geolocation.latitude, longitude: geolocation.longitude }
+                            : null
+                    }
+                />
+            )}
 
             <div className="distance-banner" data-unlocked={cameraUnlocked}>
                 {geolocation.error && <p className="error-text">Location error: {geolocation.error}</p>}
@@ -162,19 +206,52 @@ export function TaskField() {
                     Enable compass for direction stamping
                 </button>
             )}
+            {compass.permissionDenied && (
+                <p className="muted">
+                    Compass unavailable — photos will still upload, but without a direction stamp.
+                </p>
+            )}
 
-            <ProgressTracker photosCaptured={photosCaptured} requiredPhotos={requiredPhotos} videoCaptured={videoCaptured} requiredVideo={requiredVideo} />
-
-            {uploadError && <p className="error-text">{uploadError}</p>}
-
-            <CaptureStage
-                mode={mode}
-                cardinal={compass.cardinal}
-                disabled={!cameraUnlocked}
-                busy={uploading}
-                onPhotoCaptured={handlePhotoCaptured}
-                onVideoRecorded={handleVideoRecorded}
+            <ProgressTracker
+                photosCaptured={photosCaptured}
+                requiredPhotos={requiredPhotos}
+                videoCaptured={videoCaptured}
+                requiredVideo={requiredVideo}
             />
+
+            {uploadError && (
+                <div className="upload-error">
+                    <p className="error-text">{uploadError}</p>
+                    {pending && (
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={uploading}
+                            onClick={() => void send(pending)}
+                        >
+                            {uploading ? 'Retrying…' : `Retry ${pending.mediaType} upload`}
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {cameraUnlocked ? (
+                <CaptureStage
+                    mode={mode}
+                    cardinal={compass.cardinal}
+                    stream={camera.stream}
+                    cameraError={camera.error}
+                    disabled={!cameraUnlocked || pending !== null}
+                    busy={uploading}
+                    onPhotoCaptured={handlePhotoCaptured}
+                    onVideoRecorded={handleVideoRecorded}
+                />
+            ) : (
+                <div className="capture-locked">
+                    The camera unlocks automatically when you are within{' '}
+                    {formatDistance(task.cameraUnlockDistanceMeters)} of the property.
+                </div>
+            )}
         </div>
     );
 }
