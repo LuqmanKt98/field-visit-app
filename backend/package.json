@@ -12,7 +12,10 @@
     "create-admin": "tsx src/scripts/createAdmin.ts",
     "provision-s3": "tsx src/scripts/provisionS3.ts",
     "verify-s3": "tsx src/scripts/verifyS3.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "reset-demo": "tsx src/scripts/resetDemo.ts",
+    "set-task-location": "tsx src/scripts/setTaskLocation.ts",
+    "list-task-media": "tsx src/scripts/listTaskMedia.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:integration": "vitest run src/routes/media.integration.test.ts",
     "test:all": "vitest run"

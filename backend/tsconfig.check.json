@@ -1,0 +1,14 @@
+{
+  // Type-checking only (no emit), covering BOTH entrypoints:
+  //   src/server.ts  -- long-running Node host
+  //   api/index.ts   -- Vercel serverless handler
+  //
+  // The build config cannot cover api/ because its rootDir is "src". Without this,
+  // the one file production actually boots through on Vercel goes unchecked.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "api"]
+}

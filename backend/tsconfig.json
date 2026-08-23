@@ -14,5 +14,8 @@
     "declaration": false,
     "sourceMap": true
   },
+  // Build config: emits dist/server.js for a long-running Node host, so rootDir stays
+  // "src". The Vercel entrypoint in api/ is compiled by Vercel itself and is
+  // type-checked via tsconfig.check.json instead.
   "include": ["src"]
 }

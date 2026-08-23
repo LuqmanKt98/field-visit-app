@@ -117,10 +117,22 @@ cp .env.example .env.local   # fill in VITE_GOOGLE_MAPS_API_KEY
 npm run dev                   # http://localhost:5173
 ```
 
-Camera and geolocation both require a secure context on a real phone — either deploy
-behind HTTPS, or use `npm run dev -- --host` and open the printed network URL from a
-phone on the same Wi-Fi (Chrome/Safari allow camera/geo on `localhost` and LAN IPs
-without HTTPS during development, but not on other hostnames).
+Camera and geolocation require a **secure context**. Only `localhost`, `127.0.0.1` and
+HTTPS qualify — a LAN address such as `http://192.168.1.11:5173` does **not**, so
+opening the Vite `--host` URL directly on a phone will fail to open the camera.
+
+To test on a real device, use one of:
+
+- **Android (simplest, no config):** connect by USB with USB debugging on, open
+  `chrome://inspect/#devices` on the desktop, and add a port forward
+  `5173 → localhost:5173` (and `4000 → localhost:4000`). The phone then reaches the app
+  at `http://localhost:5173`, which *is* a secure context, so camera and GPS work.
+- **iPhone, or without a cable:** put an HTTPS tunnel in front of both servers
+  (`cloudflared tunnel --url http://localhost:5173` and the same for `:4000`), then set
+  `VITE_API_BASE_URL` to the backend tunnel URL and `CORS_ORIGIN` to the frontend one,
+  and re-run `npm run provision-s3` so the bucket's CORS policy matches.
+
+See `TESTING.md` for a full manual test walkthrough.
 
 ## Configuration
 
