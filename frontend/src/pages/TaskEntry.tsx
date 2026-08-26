@@ -11,6 +11,10 @@ export function TaskEntry() {
     const [searchParams] = useSearchParams();
     const [taskId, setTaskId] = useState('');
     const [error, setError] = useState<string | null>(null);
+    // The example ID is hidden as soon as the field is tapped. A placeholder normally
+    // lingers until the first keystroke, which reads as though the box already has a
+    // number in it that needs deleting.
+    const [focused, setFocused] = useState(false);
 
     // Supports direct links like MyFieldVisitApp.com?taskid=345667896.
     useEffect(() => {
@@ -57,15 +61,21 @@ export function TaskEntry() {
                                     /* numeric keypad on phones, without type=number's spinners */
                                     inputMode="numeric"
                                     pattern="[0-9]*"
-                                    placeholder="345667896"
+                                    placeholder={focused ? '' : '345667896'}
                                     value={taskId}
                                     onChange={(e) => {
                                         setTaskId(e.target.value);
                                         if (error) setError(null);
                                     }}
-                                    autoFocus
                                     autoComplete="off"
-                                    className="h-14 text-center text-2xl font-semibold tracking-[0.15em] tabular-nums"
+                                    onFocus={(e) => {
+                                        setFocused(true);
+                                        // Selects anything already typed, so a correction
+                                        // replaces the number instead of appending to it.
+                                        e.target.select();
+                                    }}
+                                    onBlur={() => setFocused(false)}
+                                    className="h-14 text-center text-2xl font-semibold tracking-[0.15em] tabular-nums placeholder:font-normal placeholder:tracking-normal placeholder:text-muted-foreground/50"
                                     aria-describedby={error ? 'taskIdError' : undefined}
                                     aria-invalid={Boolean(error)}
                                 />
