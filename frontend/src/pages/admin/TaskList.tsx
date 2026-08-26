@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, ClipboardList, Images, LogOut, MapPin, Search, SearchX, ShieldCheck } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ClipboardList, Images, Link2, LogOut, MapPin, Plus, Search, SearchX, ShieldCheck } from 'lucide-react';
 import { AdminPagination, listAdminTasks } from '@/services/api';
 import { MediaGallery } from '@/components/MediaGallery';
+import { NewVisitDialog } from '@/components/NewVisitDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -45,6 +46,21 @@ export function TaskList({
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [viewingTaskId, setViewingTaskId] = useState<string | null>(null);
+    const [creating, setCreating] = useState(false);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    // The link is how a visit actually reaches the field, so copying it is a primary
+    // action on every row rather than something to assemble by hand.
+    async function copyVisitLink(id: string): Promise<void> {
+        const url = window.location.origin + '/?taskid=' + id;
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch {
+            window.prompt('Copy this link for the field representative:', url);
+        }
+        setCopiedId(id);
+        setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 2000);
+    }
 
     // Debounced so typing a Task ID does not fire a request per keystroke.
     useEffect(() => {
@@ -100,6 +116,10 @@ export function TaskList({
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
+                        <Button size="sm" onClick={() => setCreating(true)}>
+                            <Plus className="h-4 w-4" />
+                            <span className="hidden sm:inline">New visit</span>
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={onChangePassword}>
                             <ShieldCheck className="h-4 w-4" />
                             <span className="hidden sm:inline">Change password</span>
@@ -174,7 +194,7 @@ export function TaskList({
                             </EmptyState>
                         ) : (
                             <EmptyState icon={<ClipboardList className="h-6 w-6" />} title="No field visits yet">
-                                Tasks appear here once they are added to the database.
+                                Create the first one, then send its link to whoever is going out to the property.
                             </EmptyState>
                         )}
                     </Card>
@@ -191,6 +211,7 @@ export function TaskList({
                                             <th className="px-4 py-3 font-semibold">Address</th>
                                             <th className="px-4 py-3 font-semibold">Created</th>
                                             <th className="px-4 py-3 font-semibold">Updated</th>
+                                            <th className="px-4 py-3 font-semibold">Link</th>
                                             <th className="px-4 py-3 font-semibold">Photos</th>
                                         </tr>
                                     </thead>
@@ -211,6 +232,21 @@ export function TaskList({
                                                         {formatDate(t.updatedTimestamp)}
                                                     </td>
                                                     <td className="px-4 py-3">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => copyVisitLink(t.taskId)}
+                                                            title="Copy the link for the field representative"
+                                                        >
+                                                            {copiedId === t.taskId ? (
+                                                                <Check className="h-3.5 w-3.5" />
+                                                            ) : (
+                                                                <Link2 className="h-3.5 w-3.5" />
+                                                            )}
+                                                            {copiedId === t.taskId ? 'Copied' : 'Copy'}
+                                                        </Button>
+                                                    </td>
+                                                    <td className="px-4 py-3">
                                                         {t.cloudUrl ? (
                                                             <Button
                                                                 variant="outline"
@@ -229,7 +265,7 @@ export function TaskList({
                                         })}
                                         {loading && tasks.length === 0 && (
                                             <tr>
-                                                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                                                <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">
                                                     Loading…
                                                 </td>
                                             </tr>
@@ -256,16 +292,30 @@ export function TaskList({
                                         <p className="text-xs text-muted-foreground">
                                             Updated {formatDate(t.updatedTimestamp)}
                                         </p>
-                                        {t.cloudUrl && (
+                                        <div className="flex gap-2">
                                             <Button
                                                 variant="outline"
-                                                className="w-full"
-                                                onClick={() => setViewingTaskId(t.taskId)}
+                                                className="flex-1"
+                                                onClick={() => copyVisitLink(t.taskId)}
                                             >
-                                                <Images className="h-4 w-4" />
-                                                View photos &amp; video
+                                                {copiedId === t.taskId ? (
+                                                    <Check className="h-4 w-4" />
+                                                ) : (
+                                                    <Link2 className="h-4 w-4" />
+                                                )}
+                                                {copiedId === t.taskId ? 'Copied' : 'Copy link'}
                                             </Button>
-                                        )}
+                                            {t.cloudUrl && (
+                                                <Button
+                                                    variant="outline"
+                                                    className="flex-1"
+                                                    onClick={() => setViewingTaskId(t.taskId)}
+                                                >
+                                                    <Images className="h-4 w-4" />
+                                                    Photos
+                                                </Button>
+                                            )}
+                                        </div>
                                     </Card>
                                 );
                             })}
@@ -297,6 +347,15 @@ export function TaskList({
                     </div>
                 )}
             </main>
+
+            {creating && (
+                <NewVisitDialog
+                    token={token}
+                    onClose={() => setCreating(false)}
+                    onCreated={load}
+                    onSessionExpired={onSessionExpired}
+                />
+            )}
 
             {viewingTaskId && (
                 <MediaGallery

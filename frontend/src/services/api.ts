@@ -166,6 +166,31 @@ export function listAdminTasks(
     });
 }
 
+export interface CreateTaskInput {
+    taskId?: string;
+    streetAddress: string;
+    city?: string;
+    pinCode?: string;
+    agentFirstName?: string;
+    latitude: number;
+    longitude: number;
+}
+
+export function getSuggestedTaskId(token: string): Promise<{ taskId: string }> {
+    return request('/admin/tasks/new/suggested-id', { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createAdminTask(
+    token: string,
+    input: CreateTaskInput,
+): Promise<{ taskId: string; address: string; latitude: number; longitude: number }> {
+    return request('/admin/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(input),
+    });
+}
+
 /**
  * Media for one task, as short-lived presigned URLs that can actually be displayed.
  * The bucket is private, so the stored S3 links return 403 on their own.

@@ -9,6 +9,92 @@ export async function getTaskById(taskId: string): Promise<TaskFieldRow | null> 
     return rows[0] ?? null;
 }
 
+export interface CreateTaskInput {
+    taskId?: string;
+    jobId?: string;
+    vendorTaskId?: string;
+    streetAddress: string;
+    city?: string;
+    pinCode?: string;
+    district?: string;
+    latitude: number;
+    longitude: number;
+    agentFirstName?: string;
+    agentLastName?: string;
+    propertyManagerPhone?: string;
+    createdBy: string;
+}
+
+/**
+ * Suggests a free Task ID.
+ *
+ * Real tasks normally arrive from the client's own systems with their own numbering,
+ * so the ID is only generated when the person creating the visit has not supplied one.
+ * Built from the date plus a random tail, which keeps it readable and short enough to
+ * read off a job sheet.
+ */
+export async function suggestTaskId(): Promise<string> {
+    for (let attempt = 0; attempt < 12; attempt++) {
+        const now = new Date();
+        const stamp = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+        const candidate = `${stamp}${Math.floor(1000 + Math.random() * 9000)}`;
+        const { rows } = await pool.query('SELECT 1 FROM tasks_field WHERE task_id = $1', [candidate]);
+        if (rows.length === 0) return candidate;
+    }
+    throw new Error('Could not allocate a Task ID, please try again');
+}
+
+export async function createTask(input: CreateTaskInput): Promise<TaskFieldRow> {
+    const taskId = input.taskId ?? (await suggestTaskId());
+
+    const fullAddress = [input.streetAddress, input.city, input.pinCode].filter(Boolean).join(', ');
+
+    const { rows } = await pool.query<TaskFieldRow>(
+        `INSERT INTO tasks_field (
+            task_id, task_status, job_id, vendor_task_id,
+            prop_full_addr, prop_st_addr, prop_city, prop_pin_cd, prop_district,
+            g_address, g_latitude, g_longitude,
+            agent_fm, agent_lm, prop_mgr_phone,
+            created_by, created_timestamp, updated_by, updated_timestamp
+        ) VALUES ($1, 0, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $15, now())
+        RETURNING *`,
+        [
+            taskId,
+            input.jobId ?? null,
+            input.vendorTaskId ?? null,
+            fullAddress.slice(0, 100),
+            input.streetAddress.slice(0, 60),
+            input.city?.slice(0, 55) ?? null,
+            input.pinCode?.slice(0, 15) ?? null,
+            input.district?.slice(0, 55) ?? null,
+            fullAddress.slice(0, 100),
+            String(input.latitude),
+            String(input.longitude),
+            input.agentFirstName?.slice(0, 55) ?? null,
+            input.agentLastName?.slice(0, 55) ?? null,
+            input.propertyManagerPhone?.slice(0, 15) ?? null,
+            input.createdBy.slice(0, 35),
+        ],
+    );
+    return rows[0];
+}
+
+/** Moves an existing visit to a new position, for a mistyped or mis-pinned address. */
+export async function updateTaskLocation(
+    taskId: string,
+    latitude: number,
+    longitude: number,
+    updatedBy: string,
+): Promise<boolean> {
+    const result = await pool.query(
+        `UPDATE tasks_field
+         SET g_latitude = $2, g_longitude = $3, updated_by = $4, updated_timestamp = now()
+         WHERE task_id = $1`,
+        [taskId, String(latitude), String(longitude), updatedBy.slice(0, 35)],
+    );
+    return (result.rowCount ?? 0) > 0;
+}
+
 export async function getTaskMedia(taskId: string): Promise<TaskMediaRow[]> {
     const { rows } = await pool.query<TaskMediaRow>(
         `SELECT * FROM task_media WHERE task_id = $1 ORDER BY media_type, sequence_number`,

@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdminAuth } from '../middleware/adminAuth';
-import { getTaskMedia, listTasksForAdmin } from '../services/taskService';
+import {
+    createTask,
+    getTaskById,
+    getTaskMedia,
+    listTasksForAdmin,
+    suggestTaskId,
+    updateTaskLocation,
+} from '../services/taskService';
 import { createPresignedDownloadUrl } from '../services/s3Service';
 import { isValidTaskId } from '../utils/taskId';
 import { config } from '../config';
@@ -47,6 +54,87 @@ adminRouter.get('/tasks', async (req, res) => {
             totalPages: Math.ceil(total / parsed.data.pageSize),
         },
     });
+});
+
+// GET /api/admin/tasks/new/suggested-id
+// A free Task ID to pre-fill the "new visit" form with.
+adminRouter.get('/tasks/new/suggested-id', async (_req, res) => {
+    res.json({ taskId: await suggestTaskId() });
+});
+
+const createTaskSchema = z.object({
+    // Optional: real visits usually carry the client's own reference, so the field is
+    // pre-filled with a suggestion but can be overwritten with theirs.
+    taskId: z.string().regex(/^\d{1,19}$/).optional(),
+    jobId: z.string().max(23).optional(),
+    vendorTaskId: z.string().max(35).optional(),
+    streetAddress: z.string().min(3).max(60),
+    city: z.string().max(55).optional(),
+    pinCode: z.string().max(15).optional(),
+    district: z.string().max(55).optional(),
+    latitude: z.coerce.number().min(-90).max(90),
+    longitude: z.coerce.number().min(-180).max(180),
+    agentFirstName: z.string().max(55).optional(),
+    agentLastName: z.string().max(55).optional(),
+    propertyManagerPhone: z.string().max(15).optional(),
+});
+
+// POST /api/admin/tasks
+// Creates a field visit. Without this there is no way to get a visit into the system
+// short of writing SQL by hand, which is not something an office user can do.
+adminRouter.post('/tasks', async (req, res) => {
+    const parsed = createTaskSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ error: 'Please check the details', details: parsed.error.flatten() });
+        return;
+    }
+
+    if (parsed.data.taskId) {
+        const existing = await getTaskById(parsed.data.taskId);
+        if (existing) {
+            res.status(409).json({ error: `Task ID ${parsed.data.taskId} is already in use.` });
+            return;
+        }
+    }
+
+    const task = await createTask({ ...parsed.data, createdBy: req.admin!.username });
+    res.status(201).json({
+        taskId: task.task_id,
+        address: task.prop_full_addr,
+        latitude: Number(task.g_latitude),
+        longitude: Number(task.g_longitude),
+    });
+});
+
+const locationSchema = z.object({
+    latitude: z.coerce.number().min(-90).max(90),
+    longitude: z.coerce.number().min(-180).max(180),
+});
+
+// PATCH /api/admin/tasks/:taskId/location
+// Lets an office user correct a pin that was dropped in the wrong place, without
+// needing anyone to touch the database.
+adminRouter.patch('/tasks/:taskId/location', async (req, res) => {
+    if (!isValidTaskId(req.params.taskId)) {
+        res.status(400).json({ error: 'taskId must be numeric' });
+        return;
+    }
+    const parsed = locationSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ error: 'A latitude and longitude are required' });
+        return;
+    }
+    const updated = await updateTaskLocation(
+        req.params.taskId,
+        parsed.data.latitude,
+        parsed.data.longitude,
+        req.admin!.username,
+    );
+    if (!updated) {
+        res.status(404).json({ error: `No task found for ID ${req.params.taskId}` });
+        return;
+    }
+    res.json({ ok: true });
 });
 
 // GET /api/admin/tasks/:taskId/media
