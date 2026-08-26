@@ -52,7 +52,18 @@ export function useCameraStream(enabled: boolean): CameraStreamState {
 
         navigator.mediaDevices
             .getUserMedia({
-                video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                video: {
+                    // Every constraint is `ideal`, never `exact`: a budget phone that
+                    // cannot meet them should open a lower-resolution camera rather
+                    // than fail with OverconstrainedError and block the visit.
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    // Capping frame rate matters on both ends of the fleet: it stops a
+                    // flagship opening a 60fps stream whose extra frames are discarded,
+                    // and keeps a weak device from over-committing.
+                    frameRate: { ideal: 30, max: 30 },
+                },
                 audio: true,
             })
             .then((stream) => {

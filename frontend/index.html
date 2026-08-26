@@ -3,11 +3,75 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f172a" />
-    <title>Field Visit App</title>
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="Capture and upload photos of a property field visit." />
+    <title>Field Visit</title>
+    <style>
+      /* Inline so it renders even if the stylesheet or bundle never loads. */
+      #unsupported {
+        display: none;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        max-width: 30rem;
+        margin: 0 auto;
+        padding: 3rem 1.5rem;
+        color: #0e141b;
+        line-height: 1.6;
+      }
+      #unsupported h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
+      #unsupported p { margin: 0 0 0.75rem; color: #47555f; }
+      #unsupported ul { padding-left: 1.2rem; color: #47555f; }
+      #unsupported code { background: #eef1f4; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+
+    <div id="unsupported">
+      <h1>Please update your browser</h1>
+      <p>This app needs a newer browser than the one on this phone to take and upload photos safely.</p>
+      <ul>
+        <li><strong>Android:</strong> update <strong>Chrome</strong> from the Play Store.</li>
+        <li><strong>iPhone:</strong> update iOS in <code>Settings &rsaquo; General &rsaquo; Software Update</code>.</li>
+      </ul>
+      <p>If it still does not work, ask your supervisor for a different phone to complete this visit.</p>
+    </div>
+
+    <script>
+      /*
+       * Capability gate, written in ES5 and inline so it runs on browsers too old to
+       * parse the app bundle at all.
+       *
+       * Without it, an out-of-date phone loads the app and fails in a confusing way:
+       * Tailwind v4 renders every translucent surface through color-mix(), so an older
+       * engine drops those backgrounds and produces an unreadable page, while camera
+       * capture fails separately. A rep in the field cannot debug that. Naming the
+       * problem and the fix is far more useful than a half-broken screen.
+       */
+      (function () {
+        var problems = [];
+
+        // The Tailwind v4 floor. Everything visual depends on it.
+        if (!(window.CSS && CSS.supports && CSS.supports('color', 'color-mix(in srgb, red 50%, blue)'))) {
+          problems.push('css');
+        }
+        // Camera capture is the whole point of the app.
+        if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+          problems.push('camera');
+        }
+        if (!window.Promise || !window.fetch) {
+          problems.push('js');
+        }
+
+        if (problems.length) {
+          var root = document.getElementById('root');
+          if (root) root.style.display = 'none';
+          document.getElementById('unsupported').style.display = 'block';
+          // Leave a breadcrumb so a support call can identify the cause quickly.
+          try { console.warn('Unsupported browser:', problems.join(', ')); } catch (e) {}
+        }
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -32,7 +32,7 @@ export function TaskEntry() {
     }
 
     return (
-        <div className="flex min-h-dvh items-center justify-center bg-muted/40 px-4 py-10">
+        <div className="flex min-h-screen-safe items-center justify-center bg-muted/40 px-4 py-10">
             <div className="w-full max-w-md">
                 <div className="mb-6 flex items-center justify-center gap-2.5">
                     <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">

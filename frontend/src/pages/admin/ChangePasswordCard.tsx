@@ -54,7 +54,7 @@ export function ChangePasswordCard({
     }
 
     return (
-        <div className="flex min-h-dvh items-center justify-center bg-muted/40 px-4 py-10">
+        <div className="flex min-h-screen-safe items-center justify-center bg-muted/40 px-4 py-10">
             <Card className="w-full max-w-md">
                 <CardContent className="p-6 sm:p-8">
                     <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/feedback';
 import { drawStamp } from '@/utils/stamp';
 import { pickRecordingFormat, toContentType } from '@/utils/recording';
+import { CAPTURE_LIMITS, canRecordStampedVideo, drawFrameContained, fitWithin, type Size } from '@/utils/capture';
 
 const MAX_VIDEO_SECONDS = 120;
 
@@ -53,10 +54,39 @@ export function CaptureStage({
         return () => clearInterval(id);
     }, []);
 
+    /**
+     * Preview shape, as height ÷ width, taken from the real camera feed so the preview
+     * shows exactly what will be saved. Held to 3/4 (landscape) until the stream
+     * reports its size.
+     *
+     * Applied as percentage padding rather than `aspect-ratio` deliberately: this app
+     * targets browsers older than that property, where an aspect-ratio box collapses to
+     * zero height and the preview disappears entirely.
+     */
+    const [previewRatio, setPreviewRatio] = useState(3 / 4);
+
     useEffect(() => {
-        if (videoRef.current && stream) {
-            videoRef.current.srcObject = stream;
-        }
+        const video = videoRef.current;
+        if (!video || !stream) return;
+        video.srcObject = stream;
+
+        const onMeta = () => {
+            if (video.videoWidth && video.videoHeight) {
+                setPreviewRatio(video.videoHeight / video.videoWidth);
+            }
+        };
+        video.addEventListener('loadedmetadata', onMeta);
+        // Fires already-loaded when the stream is reattached.
+        if (video.videoWidth) onMeta();
+
+        // A rotation swaps the reported dimensions, so the preview must re-shape too.
+        window.addEventListener('orientationchange', onMeta);
+        window.addEventListener('resize', onMeta);
+        return () => {
+            video.removeEventListener('loadedmetadata', onMeta);
+            window.removeEventListener('orientationchange', onMeta);
+            window.removeEventListener('resize', onMeta);
+        };
     }, [stream]);
 
     useEffect(() => {
@@ -84,15 +114,28 @@ export function CaptureStage({
         cardinalRef.current = cardinal;
     }, [cardinal]);
 
-    const captureVideoFrame = useCallback((canvas: HTMLCanvasElement): boolean => {
+    /**
+     * Draws the current camera frame plus its stamp into `canvas`.
+     *
+     * When `fixedSize` is given the canvas keeps that size and the frame is letterboxed
+     * into it. That is what recording uses: the canvas feeds a live MediaStream, so
+     * resizing it mid-recording (which is exactly what a phone rotation would do)
+     * risks corrupting the output.
+     */
+    const captureVideoFrame = useCallback((canvas: HTMLCanvasElement, fixedSize?: Size): boolean => {
         const video = videoRef.current;
         if (!video || !video.videoWidth) return false;
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+
+        const target = fixedSize ?? fitWithin(video.videoWidth, video.videoHeight, CAPTURE_LIMITS.photoMaxEdge);
+        if (canvas.width !== target.width || canvas.height !== target.height) {
+            canvas.width = target.width;
+            canvas.height = target.height;
+        }
+
         const ctx = canvas.getContext('2d');
         if (!ctx) return false;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        drawStamp(ctx, canvas.width, canvas.height, cardinalRef.current, new Date());
+        drawFrameContained(ctx, video, video.videoWidth, video.videoHeight, target.width, target.height);
+        drawStamp(ctx, target.width, target.height, cardinalRef.current, new Date());
         return true;
     }, []);
 
@@ -115,10 +158,12 @@ export function CaptureStage({
             (blob) => {
                 capturingRef.current = false;
                 if (blob) onPhotoCaptured(blob, 'image/jpeg');
-                else setRecordError('Could not save that photo. Please take it again.');
+                // toBlob yields null when the device is out of memory, which is a real
+                // outcome on a budget phone part-way through a visit.
+                else setRecordError('Could not save that photo — the phone may be low on memory. Please take it again.');
             },
             'image/jpeg',
-            0.92,
+            CAPTURE_LIMITS.photoQuality,
         );
     }
 
@@ -141,39 +186,85 @@ export function CaptureStage({
         if (recording && recordingSeconds >= MAX_VIDEO_SECONDS) stopRecording();
     }, [recording, recordingSeconds, stopRecording]);
 
+    /**
+     * Stop if the phone is locked or the rep switches apps.
+     *
+     * requestAnimationFrame is suspended while the page is hidden, so the canvas being
+     * recorded freezes on its last frame while the recorder keeps running. Left alone
+     * that produces a video that looks fine in length but is a still image for most of
+     * it -- worse than a short recording, because nothing signals it went wrong.
+     */
+    useEffect(() => {
+        if (!recording) return;
+        const onHidden = () => {
+            if (document.visibilityState === 'hidden') {
+                stopRecording();
+                setRecordError(
+                    'Recording stopped because the screen turned off or you left the app. Please record again, keeping the app open.',
+                );
+            }
+        };
+        document.addEventListener('visibilitychange', onHidden);
+        return () => document.removeEventListener('visibilitychange', onHidden);
+    }, [recording, stopRecording]);
+
     function startRecording(): void {
         const canvas = recordCanvasRef.current;
-        if (!stream || !canvas) return;
+        const video = videoRef.current;
+        if (!stream || !canvas || !video) return;
 
+        if (!canRecordStampedVideo()) {
+            setRecordError(
+                'This browser cannot record video. Please use the latest Chrome (Android) or Safari (iPhone).',
+            );
+            return;
+        }
         const format = pickRecordingFormat();
         if (!format) {
             setRecordError('This browser cannot record video. Please use Chrome or Safari.');
             return;
         }
-        if (!captureVideoFrame(canvas)) {
+        if (!video.videoWidth) {
             setRecordError('Camera is still starting up. Try again in a moment.');
             return;
         }
         setRecordError(null);
 
+        // Size is decided once, here, and held for the whole recording. Encoding at the
+        // sensor's full resolution would pin the CPU on a mid-range phone; capping the
+        // long edge keeps the encode affordable and the file small enough to upload
+        // over mobile data.
+        const size = fitWithin(video.videoWidth, video.videoHeight, CAPTURE_LIMITS.videoMaxEdge);
+        captureVideoFrame(canvas, size);
+
         const drawLoop = () => {
-            captureVideoFrame(canvas);
+            captureVideoFrame(canvas, size);
             animationFrameRef.current = requestAnimationFrame(drawLoop);
         };
         animationFrameRef.current = requestAnimationFrame(drawLoop);
 
         // Record the stamped canvas, not the raw camera, so the direction/timestamp
         // are part of the video itself rather than a screen overlay.
-        const canvasStream = canvas.captureStream(30);
+        const canvasStream = canvas.captureStream(CAPTURE_LIMITS.videoFrameRate);
         const combined = new MediaStream([...canvasStream.getVideoTracks(), ...stream.getAudioTracks()]);
 
         let recorder: MediaRecorder;
         try {
-            recorder = new MediaRecorder(combined, { mimeType: format.mimeType });
+            recorder = new MediaRecorder(combined, {
+                mimeType: format.mimeType,
+                videoBitsPerSecond: CAPTURE_LIMITS.videoBitsPerSecond,
+                audioBitsPerSecond: CAPTURE_LIMITS.audioBitsPerSecond,
+            });
         } catch {
-            setRecordError('Could not start recording on this device.');
-            if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
-            return;
+            // Some browsers accept the mimeType but reject the bitrate hints; retry
+            // without them rather than failing the capture outright.
+            try {
+                recorder = new MediaRecorder(combined, { mimeType: format.mimeType });
+            } catch {
+                setRecordError('Could not start recording on this device.');
+                if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+                return;
+            }
         }
 
         chunksRef.current = [];
@@ -216,8 +307,24 @@ export function CaptureStage({
 
     return (
         <div className="space-y-3">
-            <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border bg-slate-900">
-                <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+            {/*
+                The preview matches the camera's real aspect ratio, and the frame is
+                contained rather than cropped. A phone held upright gives a portrait
+                stream (1080x1920), so a fixed 4:3 box with object-cover showed only a
+                horizontal slice of it -- the rep would frame the property against a
+                preview that hid most of what was actually being saved.
+            */}
+            <div
+                className="relative w-full overflow-hidden rounded-xl border bg-slate-900"
+                style={{ height: 0, paddingBottom: `${(previewRatio * 100).toFixed(3)}%` }}
+            >
+                <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="absolute inset-0 h-full w-full object-contain"
+                />
 
                 {mode === 'photo' && !streamNotReady && (
                     <div className="absolute left-3 top-3 rounded-full bg-slate-900/70 px-3 py-1.5 text-xs font-bold text-white backdrop-blur-sm">

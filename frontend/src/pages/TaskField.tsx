@@ -165,7 +165,7 @@ export function TaskField() {
 
     if (loadError) {
         return (
-            <div className="flex min-h-dvh items-center justify-center bg-muted/40 px-4">
+            <div className="flex min-h-screen-safe items-center justify-center bg-muted/40 px-4">
                 <Card className="w-full max-w-md">
                     <CardContent className="p-8 text-center">
                         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -187,7 +187,7 @@ export function TaskField() {
 
     if (!task) {
         return (
-            <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-muted/40 px-4">
+            <div className="flex min-h-screen-safe flex-col items-center justify-center gap-3 bg-muted/40 px-4">
                 <div
                     className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary"
                     aria-hidden="true"
@@ -205,7 +205,7 @@ export function TaskField() {
     const started = photosCaptured > 0 || videoCaptured > 0;
 
     return (
-        <div className="min-h-dvh bg-muted/40">
+        <div className="min-h-screen-safe bg-muted/40">
             <div className="pb-safe pt-safe mx-auto max-w-2xl space-y-4 px-4">
                 <header className="flex items-start justify-between gap-3 pt-2">
                     <div className="min-w-0">

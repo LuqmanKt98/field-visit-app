@@ -116,4 +116,16 @@
     .pb-safe {
         padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
     }
+
+    /* Full-height screens.
+       `dvh` accounts for the mobile URL bar shrinking on scroll, which plain `vh` does
+       not. The vh line is a fallback for a lower build target -- at the current one
+       (Safari 16.4+) dvh is already supported, so Lightning CSS strips it as dead code.
+       Kept so the fallback returns automatically if the target is ever lowered.
+       Deliberately not named `min-h-dvh`: Tailwind ships that utility itself, and its
+       dvh-only declaration would win and drop the fallback. */
+    .min-h-screen-safe {
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
 }
