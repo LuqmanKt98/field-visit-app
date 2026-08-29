@@ -31,6 +31,8 @@ export interface CompassState {
     headingDegrees: number | null;
     cardinal: string | null;
     source: CompassSource;
+    /** Degrees the rear camera sits below horizontal; 90 is straight at the ground. */
+    downwardTiltDegrees: number | null;
     needsPermissionRequest: boolean;
     permissionDenied: boolean;
     /** True once we have waited long enough to conclude no compass is coming. */
@@ -52,6 +54,26 @@ function readEventHeading(event: IOSDeviceOrientationEvent): number | null {
     return null;
 }
 
+/**
+ * How far below horizontal the rear camera is aimed, in degrees. 0 is level, 90 is
+ * straight down at the rep's feet, negative is above horizontal.
+ *
+ * Derived from the vertical component of the screen's outward normal, cos(beta) *
+ * cos(gamma), because the rear camera points exactly opposite the screen. Using both
+ * angles rather than beta alone keeps the answer right when the phone is turned on its
+ * side -- beta on its own reads a level landscape shot as though it were pointing at
+ * the ground.
+ *
+ * Unlike the heading, this works from a relative reading too: it comes from gravity,
+ * not the magnetometer, so it is available on handsets whose compass never reports.
+ */
+function readDownwardTilt(event: DeviceOrientationEvent): number | null {
+    const { beta, gamma } = event;
+    if (beta === null || gamma === null) return null;
+    const normalUp = Math.cos((beta * Math.PI) / 180) * Math.cos((gamma * Math.PI) / 180);
+    return (Math.asin(Math.max(-1, Math.min(1, normalUp))) * 180) / Math.PI;
+}
+
 /** Compass bearing from an absolute-orientation quaternion [x, y, z, w]. */
 function headingFromQuaternion(q: number[]): number | null {
     if (!q || q.length < 4) return null;
@@ -64,6 +86,7 @@ function headingFromQuaternion(q: number[]): number | null {
 export function useCompassHeading(): CompassState & { requestPermission: () => Promise<void> } {
     const [heading, setHeading] = useState<number | null>(null);
     const [source, setSource] = useState<CompassSource>(null);
+    const [downwardTilt, setDownwardTilt] = useState<number | null>(null);
     const [needsPermissionRequest, setNeedsPermissionRequest] = useState(false);
     const [permissionDenied, setPermissionDenied] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
@@ -93,6 +116,11 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
         };
 
         const handler = (event: Event) => {
+            // Tilt first, and unconditionally: it is useful even on the handsets whose
+            // heading is rejected below, and it is the only signal that tells a rep
+            // they are photographing the pavement.
+            setDownwardTilt(readDownwardTilt(event as DeviceOrientationEvent));
+
             const value = readEventHeading(event as IOSDeviceOrientationEvent);
             if (value === null) return;
             const isIOS = typeof (event as IOSDeviceOrientationEvent).webkitCompassHeading === 'number';
@@ -162,6 +190,7 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
 
     return {
         headingDegrees: heading,
+        downwardTiltDegrees: downwardTilt,
         cardinal: heading !== null ? headingToCardinal(heading) : null,
         source,
         needsPermissionRequest,

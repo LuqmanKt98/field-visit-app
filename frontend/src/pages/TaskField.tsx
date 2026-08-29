@@ -308,6 +308,7 @@ export function TaskField() {
                         stream={camera.stream}
                         cameraError={camera.error}
                         onRetryCamera={camera.retry}
+                        downwardTiltDegrees={compass.downwardTiltDegrees}
                         disabled={!cameraUnlocked || pending !== null}
                         busy={uploading}
                         photosDone={photosCaptured}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Compass, Loader2, RefreshCw, Square, Video } from 'lucide-react';
+import { ArrowUp, Camera, Compass, Loader2, RefreshCw, Square, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/feedback';
 import { drawStamp } from '@/utils/stamp';
@@ -22,6 +22,8 @@ interface CaptureStageProps {
     stream: MediaStream | null;
     cameraError: string | null;
     onRetryCamera: () => void;
+    /** Degrees the rear camera sits below horizontal; 90 is straight at the ground. */
+    downwardTiltDegrees: number | null;
     disabled: boolean;
     busy: boolean;
     /** Used to label the shot the rep is about to take ("Photo 4 of 10"). */
@@ -37,6 +39,7 @@ export function CaptureStage({
     stream,
     cameraError,
     onRetryCamera,
+    downwardTiltDegrees,
     disabled,
     busy,
     photosDone,
@@ -421,6 +424,20 @@ export function CaptureStage({
     const remaining = totalPhotos - photosDone;
     const shotNumber = Math.min(photosDone + 1, totalPhotos);
 
+    /*
+        The first real visit came back as ten photos of a pavement. The camera was
+        working perfectly -- ten distinct files, the rep walking between shots -- it was
+        simply pointed at the ground the whole time, because a phone held at a
+        comfortable angle to read the screen aims its rear camera at your feet.
+
+        Nothing in the app can see what a photo shows, but it can tell where the camera
+        is aimed, and past 45 degrees below horizontal there is no building in frame.
+        This only ever advises: ground-level shots of driveways, low walls and damage
+        are legitimate inspection evidence, and refusing them would trade one kind of
+        wasted visit for another.
+    */
+    const aimedAtGround = downwardTiltDegrees !== null && downwardTiltDegrees > 45;
+
     return (
         <div className="space-y-3">
             {/*
@@ -483,6 +500,14 @@ export function CaptureStage({
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/70 text-sm font-medium text-white">
                         <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                         Starting camera…
+                    </div>
+                )}
+
+                {/* Advisory only -- the shutter below stays enabled. */}
+                {aimedAtGround && !streamNotReady && !stalled && (
+                    <div className="absolute inset-x-3 top-1/2 -translate-y-1/2 rounded-lg bg-amber-500/95 px-3 py-2.5 text-center text-sm font-semibold text-amber-950 shadow-lg">
+                        <ArrowUp className="mx-auto mb-1 h-5 w-5 animate-bounce" aria-hidden="true" />
+                        You’re pointing at the ground — raise the phone towards the building
                     </div>
                 )}
             </div>
