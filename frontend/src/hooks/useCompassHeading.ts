@@ -70,6 +70,11 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
     // Flipped once iOS grants permission, which re-runs the attach effect below.
     const [listening, setListening] = useState(false);
     const gotReadingRef = useRef(false);
+    // Read inside a long-lived sensor callback, so it has to be a ref: the callback is
+    // registered once per attach and would otherwise keep testing the value of `source`
+    // from that first render (always null), letting the fallback sensor overwrite a
+    // true-north reading for the whole visit.
+    const sourceRef = useRef<CompassSource>(null);
 
     useEffect(() => {
         const OrientationEventCtor = window.DeviceOrientationEvent as OrientationPermissionEvent | undefined;
@@ -81,6 +86,7 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
 
         const accept = (value: number, from: CompassSource) => {
             gotReadingRef.current = true;
+            sourceRef.current = from;
             setHeading(value);
             setSource(from);
             setUnavailable(false);
@@ -109,7 +115,7 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
                 sensor.addEventListener('reading', () => {
                     const value = sensor?.quaternion ? headingFromQuaternion(sensor.quaternion) : null;
                     // Never let the fallback override a true-north event source.
-                    if (value !== null && (source === null || source === 'orientation-sensor')) {
+                    if (value !== null && (sourceRef.current === null || sourceRef.current === 'orientation-sensor')) {
                         accept(value, 'orientation-sensor');
                     }
                 });

@@ -1,4 +1,5 @@
-import { LocateFixed, Lock, MapPin, Unlock } from 'lucide-react';
+import { LocateFixed, Lock, MapPin, RotateCw, Unlock } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Alert } from '@/components/ui/feedback';
 import { formatDistance } from '@/utils/geo';
@@ -10,6 +11,7 @@ interface DistanceCardProps {
     unlocked: boolean;
     accuracyMeters: number | null;
     error: string | null;
+    onRetry: () => void;
 }
 
 /**
@@ -25,12 +27,18 @@ export function DistanceCard({
     unlocked,
     accuracyMeters,
     error,
+    onRetry,
 }: DistanceCardProps) {
     if (error) {
         return (
             <Alert variant="destructive">
                 <strong className="font-semibold">We can’t find your location.</strong>
                 <p className="mt-0.5">{error}</p>
+                {/* A denied prompt is recoverable, but only if something asks again. */}
+                <Button variant="outline" className="mt-3 w-full" onClick={onRetry}>
+                    <RotateCw className="h-4 w-4" />
+                    Try again
+                </Button>
             </Alert>
         );
     }

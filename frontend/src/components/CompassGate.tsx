@@ -1,4 +1,4 @@
-import { Compass, Loader2 } from 'lucide-react';
+import { Compass, Loader2, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert } from '@/components/ui/feedback';
@@ -22,6 +22,9 @@ interface CompassGateProps {
  * visit and only discover afterwards that all ten photos read "Direction: N/A" -- with
  * no way to redo it without going back to the property. Making it a step means the
  * direction is either working, or its absence was a decision somebody actually took.
+ *
+ * Every branch below offers a way forward. A rep standing in a street must never reach
+ * a screen whose only remedy is knowing to reload the page.
  */
 export function CompassGate({
     cardinal,
@@ -32,6 +35,8 @@ export function CompassGate({
     onRequestPermission,
     onContinueWithout,
 }: CompassGateProps) {
+    const showContinue = permissionDenied || unavailable;
+
     return (
         <Card>
             <CardContent className="p-6 text-center">
@@ -53,26 +58,23 @@ export function CompassGate({
                     </>
                 ) : permissionDenied ? (
                     <>
-                        <h2 className="text-lg font-bold tracking-tight">Direction access was blocked</h2>
+                        <h2 className="text-lg font-bold tracking-tight">Direction access was turned down</h2>
                         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                            Your phone refused access to the compass, so photos cannot show a direction.
-                            Close this page and open the link again to be asked once more.
+                            Your phone will only ask once. Reload the page to be asked again, and choose
+                            <strong className="text-foreground"> Allow</strong> this time.
                         </p>
+                        <Button size="lg" className="mt-5 w-full" onClick={() => window.location.reload()}>
+                            <RotateCw className="h-4 w-4" />
+                            Reload and ask again
+                        </Button>
                     </>
                 ) : unavailable ? (
                     <>
-                        <h2 className="text-lg font-bold tracking-tight">No compass on this phone</h2>
+                        <h2 className="text-lg font-bold tracking-tight">No compass reading yet</h2>
                         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                            We could not get a compass reading. Hold the phone flat and move it in a
-                            figure-8 to wake the sensor up &mdash; that fixes it on most phones.
+                            Hold the phone flat and move it in a figure-8 a couple of times. That wakes
+                            the sensor up on most phones.
                         </p>
-                        <Alert variant="warning" className="mt-4 text-left">
-                            If it still does not work, you can carry on, but every photo will be marked
-                            <strong> &ldquo;Direction: N/A&rdquo;</strong> and cannot be corrected later.
-                        </Alert>
-                        <Button variant="outline" className="mt-4 w-full" onClick={onContinueWithout}>
-                            Continue without direction
-                        </Button>
                     </>
                 ) : (
                     <>
@@ -92,6 +94,19 @@ export function CompassGate({
                             turn around and check this letter changes
                         </p>
                     </div>
+                )}
+
+                {showContinue && (
+                    <>
+                        <Alert variant="warning" className="mt-4 text-left">
+                            If the compass will not work on this phone you can still finish the visit, but
+                            every photo will be marked <strong>&ldquo;Direction: N/A&rdquo;</strong> and
+                            cannot be corrected afterwards.
+                        </Alert>
+                        <Button variant="outline" className="mt-3 w-full" onClick={onContinueWithout}>
+                            Continue without direction
+                        </Button>
+                    </>
                 )}
             </CardContent>
         </Card>

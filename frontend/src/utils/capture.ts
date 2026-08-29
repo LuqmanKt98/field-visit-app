@@ -85,3 +85,44 @@ export function canRecordStampedVideo(): boolean {
     if (typeof MediaRecorder === 'undefined') return false;
     return typeof document.createElement('canvas').captureStream === 'function';
 }
+
+/**
+ * A short signature of what the camera is showing right now.
+ *
+ * The client received a visit whose ten photos were all the same picture: the preview
+ * had frozen on an Android handset, so every shot re-encoded one stuck frame. The
+ * frame-callback watchdog should catch that first, but it depends on an API not every
+ * browser has, and a duplicate set of evidence photos is expensive enough -- someone
+ * has to travel back to the property -- to be worth a second, independent check.
+ *
+ * Sixteen-by-sixteen is deliberately coarse: it costs almost nothing per shot, and two
+ * genuinely separate frames of even a completely still scene still differ across 768
+ * subpixels because of sensor noise. An exact match means the same buffer, not a
+ * similar view. Returns null when the frame cannot be read, which is never treated as
+ * a duplicate.
+ */
+let signatureCanvas: HTMLCanvasElement | null = null;
+
+export function frameSignature(video: HTMLVideoElement): string | null {
+    if (!video.videoWidth || !video.videoHeight) return null;
+    try {
+        if (!signatureCanvas) {
+            signatureCanvas = document.createElement('canvas');
+            signatureCanvas.width = 16;
+            signatureCanvas.height = 16;
+        }
+        const ctx = signatureCanvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return null;
+        ctx.drawImage(video, 0, 0, 16, 16);
+        const { data } = ctx.getImageData(0, 0, 16, 16);
+        let out = '';
+        for (let i = 0; i < data.length; i += 4) {
+            out += data[i].toString(16).padStart(2, '0');
+            out += data[i + 1].toString(16).padStart(2, '0');
+            out += data[i + 2].toString(16).padStart(2, '0');
+        }
+        return out;
+    } catch {
+        return null;
+    }
+}

@@ -4,7 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/feedback';
 import { drawStamp } from '@/utils/stamp';
 import { pickRecordingFormat, toContentType } from '@/utils/recording';
-import { CAPTURE_LIMITS, canRecordStampedVideo, drawFrameContained, fitWithin, type Size } from '@/utils/capture';
+import {
+    CAPTURE_LIMITS,
+    canRecordStampedVideo,
+    drawFrameContained,
+    fitWithin,
+    frameSignature,
+    type Size,
+} from '@/utils/capture';
 
 const MAX_VIDEO_SECONDS = 120;
 
@@ -14,6 +21,7 @@ interface CaptureStageProps {
     /** Camera stream, or null while locked/loading. Owned by the parent. */
     stream: MediaStream | null;
     cameraError: string | null;
+    onRetryCamera: () => void;
     disabled: boolean;
     busy: boolean;
     /** Used to label the shot the rep is about to take ("Photo 4 of 10"). */
@@ -28,6 +36,7 @@ export function CaptureStage({
     cardinal,
     stream,
     cameraError,
+    onRetryCamera,
     disabled,
     busy,
     photosDone,
@@ -78,11 +87,32 @@ export function CaptureStage({
 
         const check = setInterval(() => {
             if (!supported) return;
+            // Frame callbacks stop while the page is in the background, so a rep who
+            // glances at a message would come back to a false "Camera frozen" and a
+            // disabled shutter. Only judge the feed while it is actually on screen.
+            if (document.visibilityState !== 'visible') {
+                lastFrameAtRef.current = Date.now();
+                return;
+            }
             setStalled(Date.now() - lastFrameAtRef.current > 3000);
         }, 1000);
 
+        // Coming back from another app is also the moment Android most often hands back
+        // a genuinely suspended stream, so give the element a nudge and re-measure from
+        // now rather than from whenever the rep left.
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            lastFrameAtRef.current = Date.now();
+            setStalled(false);
+            void video.play().catch(() => undefined);
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('pageshow', onVisible);
+
         return () => {
             clearInterval(check);
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('pageshow', onVisible);
             if (handle !== undefined) video.cancelVideoFrameCallback?.(handle);
         };
     }, [stream]);
@@ -96,6 +126,7 @@ export function CaptureStage({
             void video.play();
             lastFrameAtRef.current = Date.now();
             setStalled(false);
+            setRecordError(null);
         } catch {
             setRecordError('The camera could not be restarted. Please reload the page.');
         }
@@ -206,8 +237,23 @@ export function CaptureStage({
     // and a counter that simply did not move.
     const capturingRef = useRef(false);
 
+    /** Signature of the last frame actually saved, to catch a frozen feed. */
+    const lastSignatureRef = useRef<string | null>(null);
+
     function handleTakePhoto(): void {
         if (capturingRef.current) return;
+
+        const signature = videoRef.current ? frameSignature(videoRef.current) : null;
+        if (signature !== null && signature === lastSignatureRef.current) {
+            // Identical to the pixel means the feed has stopped, not that the rep took
+            // two similar shots. Saving it would put a duplicate into the evidence set.
+            setStalled(true);
+            setRecordError(
+                'That would have saved the same picture as the last photo — the camera feed has stopped. Restart the camera below, then take the photo again.',
+            );
+            return;
+        }
+
         const canvas = document.createElement('canvas');
         if (!captureVideoFrame(canvas)) {
             setRecordError('Camera is still starting up. Try again in a moment.');
@@ -218,7 +264,10 @@ export function CaptureStage({
         canvas.toBlob(
             (blob) => {
                 capturingRef.current = false;
-                if (blob) onPhotoCaptured(blob, 'image/jpeg');
+                if (blob) {
+                    lastSignatureRef.current = signature;
+                    onPhotoCaptured(blob, 'image/jpeg');
+                }
                 // toBlob yields null when the device is out of memory, which is a real
                 // outcome on a budget phone part-way through a visit.
                 else setRecordError('Could not save that photo — the phone may be low on memory. Please take it again.');
@@ -358,6 +407,12 @@ export function CaptureStage({
             <Alert variant="destructive">
                 <strong className="font-semibold">Camera unavailable</strong>
                 <p className="mt-0.5">{cameraError}</p>
+                {/* Tapping "Block" by accident is easy on a phone, and used to end the
+                    visit outright. Asking again costs one tap. */}
+                <Button variant="outline" className="mt-3 w-full" onClick={onRetryCamera}>
+                    <RefreshCw className="h-4 w-4" />
+                    Try again
+                </Button>
             </Alert>
         );
     }

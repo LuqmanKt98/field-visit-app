@@ -244,6 +244,7 @@ export function TaskField() {
                     unlocked={cameraUnlocked}
                     accuracyMeters={geolocation.accuracy}
                     error={geolocation.error}
+                    onRetry={geolocation.retry}
                 />
 
                 {/*
@@ -306,6 +307,7 @@ export function TaskField() {
                         cardinal={compass.cardinal}
                         stream={camera.stream}
                         cameraError={camera.error}
+                        onRetryCamera={camera.retry}
                         disabled={!cameraUnlocked || pending !== null}
                         busy={uploading}
                         photosDone={photosCaptured}
