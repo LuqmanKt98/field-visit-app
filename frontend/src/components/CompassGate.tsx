@@ -2,6 +2,7 @@ import { Compass, Loader2, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert } from '@/components/ui/feedback';
+import type { CompassUnavailableReason } from '@/hooks/useCompassHeading';
 
 interface CompassGateProps {
     cardinal: string | null;
@@ -9,6 +10,7 @@ interface CompassGateProps {
     needsPermissionRequest: boolean;
     permissionDenied: boolean;
     unavailable: boolean;
+    unavailableReason: CompassUnavailableReason;
     onRequestPermission: () => void;
     onContinueWithout: () => void;
 }
@@ -32,6 +34,7 @@ export function CompassGate({
     needsPermissionRequest,
     permissionDenied,
     unavailable,
+    unavailableReason,
     onRequestPermission,
     onContinueWithout,
 }: CompassGateProps) {
@@ -66,6 +69,34 @@ export function CompassGate({
                         <Button size="lg" className="mt-5 w-full" onClick={() => window.location.reload()}>
                             <RotateCw className="h-4 w-4" />
                             Reload and ask again
+                        </Button>
+                    </>
+                ) : unavailable && unavailableReason === 'no-compass' ? (
+                    <>
+                        {/*
+                            Told apart from the other two on purpose. Many budget Samsung
+                            handsets ship with no geomagnetic sensor at all, and on those
+                            the usual figure-8 advice asks a rep standing in a street to
+                            keep trying something that cannot ever work.
+                        */}
+                        <h2 className="text-lg font-bold tracking-tight">This phone has no compass</h2>
+                        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                            It has no compass sensor fitted, so it cannot tell which way you are facing.
+                            Waiting will not help. Use a phone that has a compass, or carry on without —
+                            your photos will still be saved.
+                        </p>
+                    </>
+                ) : unavailable && unavailableReason === 'blocked' ? (
+                    <>
+                        <h2 className="text-lg font-bold tracking-tight">Motion sensors are switched off</h2>
+                        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                            This phone has a compass, but the browser is not allowed to use it. Check
+                            <strong className="text-foreground"> Motion and orientation</strong> in your
+                            browser’s site settings, then reload.
+                        </p>
+                        <Button size="lg" className="mt-5 w-full" onClick={() => window.location.reload()}>
+                            <RotateCw className="h-4 w-4" />
+                            Reload and try again
                         </Button>
                     </>
                 ) : unavailable ? (

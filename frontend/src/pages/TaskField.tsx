@@ -258,6 +258,7 @@ export function TaskField() {
                         needsPermissionRequest={compass.needsPermissionRequest}
                         permissionDenied={compass.permissionDenied}
                         unavailable={compass.unavailable || compass.permissionDenied}
+                        unavailableReason={compass.unavailableReason}
                         onRequestPermission={compass.requestPermission}
                         onContinueWithout={() => setAcceptedNoCompass(true)}
                     />

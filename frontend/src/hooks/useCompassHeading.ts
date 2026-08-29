@@ -12,11 +12,16 @@ type OrientationPermissionEvent = typeof DeviceOrientationEvent & {
     requestPermission?: () => Promise<'granted' | 'denied'>;
 };
 
+interface SensorErrorEvent extends Event {
+    error?: { name?: string; message?: string };
+}
+
 interface OrientationSensorLike {
     quaternion: number[] | null;
     start(): void;
     stop(): void;
-    addEventListener(type: string, listener: () => void): void;
+    addEventListener(type: 'reading', listener: () => void): void;
+    addEventListener(type: 'error', listener: (event: SensorErrorEvent) => void): void;
 }
 
 type AbsoluteOrientationSensorCtor = new (options?: {
@@ -26,6 +31,16 @@ type AbsoluteOrientationSensorCtor = new (options?: {
 
 /** Which sensor produced the current reading -- surfaced so it can be verified on a device. */
 export type CompassSource = 'ios' | 'deviceorientationabsolute' | 'orientation-sensor' | null;
+
+/**
+ * Why no bearing is coming, when we can tell.
+ *
+ * `no-compass` is the one worth separating out. Plenty of Samsung handsets -- the A and
+ * F budget lines especially -- ship with no geomagnetic sensor at all, and on those the
+ * standard advice to wave the phone in a figure-8 is not just useless, it sends a rep
+ * standing in a street doing something that cannot possibly work.
+ */
+export type CompassUnavailableReason = 'no-compass' | 'blocked' | 'no-signal' | null;
 
 export interface CompassState {
     headingDegrees: number | null;
@@ -37,6 +52,7 @@ export interface CompassState {
     permissionDenied: boolean;
     /** True once we have waited long enough to conclude no compass is coming. */
     unavailable: boolean;
+    unavailableReason: CompassUnavailableReason;
 }
 
 function readEventHeading(event: IOSDeviceOrientationEvent): number | null {
@@ -90,9 +106,16 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
     const [needsPermissionRequest, setNeedsPermissionRequest] = useState(false);
     const [permissionDenied, setPermissionDenied] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
+    const [unavailableReason, setUnavailableReason] = useState<CompassUnavailableReason>(null);
     // Flipped once iOS grants permission, which re-runs the attach effect below.
     const [listening, setListening] = useState(false);
     const gotReadingRef = useRef(false);
+    // Orientation events arriving with absolute === false mean the accelerometer and
+    // gyroscope are working and only the magnetic reference is missing. That is the
+    // signature of a handset with no geomagnetic sensor, and it is worth telling apart
+    // from silence, which means nothing is being delivered at all.
+    const sawRelativeRef = useRef(false);
+    const sensorErrorRef = useRef<string | null>(null);
     // Read inside a long-lived sensor callback, so it has to be a ref: the callback is
     // registered once per attach and would otherwise keep testing the value of `source`
     // from that first render (always null), letting the fallback sensor overwrite a
@@ -113,6 +136,7 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
             setHeading(value);
             setSource(from);
             setUnavailable(false);
+            setUnavailableReason(null);
         };
 
         const handler = (event: Event) => {
@@ -120,6 +144,9 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
             // heading is rejected below, and it is the only signal that tells a rep
             // they are photographing the pavement.
             setDownwardTilt(readDownwardTilt(event as DeviceOrientationEvent));
+
+            const orientation = event as DeviceOrientationEvent;
+            if (orientation.alpha !== null && !orientation.absolute) sawRelativeRef.current = true;
 
             const value = readEventHeading(event as IOSDeviceOrientationEvent);
             if (value === null) return;
@@ -147,16 +174,38 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
                         accept(value, 'orientation-sensor');
                     }
                 });
-                sensor.addEventListener('error', () => undefined);
+                // Swallowing this used to cost us the single most useful piece of
+                // evidence available. AbsoluteOrientationSensor is a fusion of
+                // magnetometer, accelerometer and gyroscope, so when the magnetometer
+                // is absent it fails here with NotReadableError -- which is exactly how
+                // to tell "this phone has no compass" from "something is blocked".
+                sensor.addEventListener('error', (event: SensorErrorEvent) => {
+                    sensorErrorRef.current = event.error?.name ?? 'UnknownError';
+                });
                 sensor.start();
-            } catch {
+            } catch (err) {
+                sensorErrorRef.current = (err as { name?: string })?.name ?? 'UnknownError';
                 sensor = null;
             }
         }
 
-        // Conclude "no compass" only after giving every source a chance to report.
+        // Conclude "no compass" only after giving every source a chance to report, then
+        // say which of the three situations it is rather than offering one generic
+        // remedy that only helps in one of them.
         const verdict = setTimeout(() => {
-            if (!gotReadingRef.current) setUnavailable(true);
+            if (gotReadingRef.current) return;
+            setUnavailable(true);
+            const sensorError = sensorErrorRef.current;
+            if (sensorError === 'NotAllowedError' || sensorError === 'SecurityError') {
+                setUnavailableReason('blocked');
+            } else if (sensorError !== null || sawRelativeRef.current) {
+                // Either the fusion sensor could not connect to a magnetometer, or tilt
+                // readings are arriving with no magnetic reference attached. Both mean
+                // the hardware cannot give a bearing, however long the rep waits.
+                setUnavailableReason('no-compass');
+            } else {
+                setUnavailableReason('no-signal');
+            }
         }, 4000);
 
         return () => {
@@ -196,6 +245,7 @@ export function useCompassHeading(): CompassState & { requestPermission: () => P
         needsPermissionRequest,
         permissionDenied,
         unavailable,
+        unavailableReason,
         requestPermission,
     };
 }
