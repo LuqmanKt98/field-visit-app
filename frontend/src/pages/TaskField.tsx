@@ -6,6 +6,7 @@ import { CaptureStage } from '@/components/CaptureStage';
 import { ProgressTracker } from '@/components/ProgressTracker';
 import { CompletionScreen } from '@/components/CompletionScreen';
 import { DistanceCard } from '@/components/DistanceCard';
+import { CompassGate } from '@/components/CompassGate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,9 @@ export function TaskField() {
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [pending, setPending] = useState<PendingCapture | null>(null);
+    // Set only when the rep is told the compass is unavailable and chooses to go on
+    // anyway, so "no direction" is always a deliberate decision rather than a surprise.
+    const [acceptedNoCompass, setAcceptedNoCompass] = useState(false);
 
     const geolocation = useGeolocation();
     const compass = useCompassHeading();
@@ -242,24 +246,26 @@ export function TaskField() {
                     error={geolocation.error}
                 />
 
-                {compass.needsPermissionRequest && (
-                    <Button variant="outline" className="w-full" onClick={compass.requestPermission}>
-                        <Compass className="h-4 w-4" />
-                        Turn on compass for direction stamping
-                    </Button>
-                )}
-
                 {/*
-                    Warn whenever no heading is available -- not only when permission was
-                    denied. Many devices simply have no magnetometer, in which case nothing
-                    is "denied" and the rep would otherwise get no indication at all that
-                    every photo is being stamped "Direction: N/A".
+                    Direction is a hard requirement of the brief, so capture waits until
+                    the compass is confirmed working or its absence is acknowledged.
                 */}
-                {cameraUnlocked && !compass.needsPermissionRequest && compass.cardinal === null && (
+                {cameraUnlocked && compass.cardinal === null && !acceptedNoCompass ? (
+                    <CompassGate
+                        cardinal={compass.cardinal}
+                        headingDegrees={compass.headingDegrees}
+                        needsPermissionRequest={compass.needsPermissionRequest}
+                        permissionDenied={compass.permissionDenied}
+                        unavailable={compass.unavailable || compass.permissionDenied}
+                        onRequestPermission={compass.requestPermission}
+                        onContinueWithout={() => setAcceptedNoCompass(true)}
+                    />
+                ) : null}
+
+                {cameraUnlocked && compass.cardinal === null && acceptedNoCompass && (
                     <Alert variant="warning" icon={<Compass className="h-4 w-4" />}>
-                        <strong className="font-semibold">No compass reading.</strong> Photos will be
-                        stamped “Direction: N/A”. Move your phone in a figure-8 to calibrate it, or allow
-                        Motion &amp; Orientation access.
+                        <strong className="font-semibold">No direction on these photos.</strong> They will
+                        be stamped &ldquo;Direction: N/A&rdquo;.
                     </Alert>
                 )}
 
@@ -294,7 +300,7 @@ export function TaskField() {
                     </Alert>
                 )}
 
-                {cameraUnlocked ? (
+                {cameraUnlocked && (compass.cardinal !== null || acceptedNoCompass) ? (
                     <CaptureStage
                         mode={mode}
                         cardinal={compass.cardinal}
@@ -307,7 +313,10 @@ export function TaskField() {
                         onPhotoCaptured={handlePhotoCaptured}
                         onVideoRecorded={handleVideoRecorded}
                     />
-                ) : (
+                ) : !cameraUnlocked ? (
+                    // Only shown when distance is the reason. Waiting on the compass is a
+                    // different situation and has its own card above, so saying "camera
+                    // locked" there would send the rep walking around for no reason.
                     <Card className="border-dashed">
                         <CardContent className="p-7 text-center">
                             <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -321,7 +330,7 @@ export function TaskField() {
                             </p>
                         </CardContent>
                     </Card>
-                )}
+                ) : null}
             </div>
         </div>
     );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Compass, Loader2, Square, Video } from 'lucide-react';
+import { Camera, Compass, Loader2, RefreshCw, Square, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/feedback';
 import { drawStamp } from '@/utils/stamp';
@@ -46,6 +46,60 @@ export function CaptureStage({
     const [recordingSeconds, setRecordingSeconds] = useState(0);
     const [recordError, setRecordError] = useState<string | null>(null);
     const [clock, setClock] = useState(() => new Date());
+    const [stalled, setStalled] = useState(false);
+    const lastFrameAtRef = useRef(Date.now());
+
+    /**
+     * Watches for the camera feed freezing.
+     *
+     * A rep once shot an entire visit against a stuck picture and only found out
+     * afterwards, because a frozen preview looks exactly like a camera pointed at
+     * something that is not moving. requestVideoFrameCallback fires once per frame the
+     * browser actually presents, so a gap means the feed has genuinely stopped rather
+     * than the scene being still.
+     */
+    useEffect(() => {
+        const video = videoRef.current as (HTMLVideoElement & {
+            requestVideoFrameCallback?: (cb: () => void) => number;
+            cancelVideoFrameCallback?: (handle: number) => void;
+        }) | null;
+        if (!video || !stream) return;
+
+        lastFrameAtRef.current = Date.now();
+        let handle: number | undefined;
+        const onFrame = () => {
+            lastFrameAtRef.current = Date.now();
+            handle = video.requestVideoFrameCallback?.(onFrame);
+        };
+        handle = video.requestVideoFrameCallback?.(onFrame);
+        // Without per-frame callbacks there is nothing dependable to measure, so the
+        // check simply stays quiet rather than guessing.
+        const supported = typeof video.requestVideoFrameCallback === 'function';
+
+        const check = setInterval(() => {
+            if (!supported) return;
+            setStalled(Date.now() - lastFrameAtRef.current > 3000);
+        }, 1000);
+
+        return () => {
+            clearInterval(check);
+            if (handle !== undefined) video.cancelVideoFrameCallback?.(handle);
+        };
+    }, [stream]);
+
+    /** Nudges a stalled feed back to life without losing progress. */
+    const restartPreview = useCallback(() => {
+        const video = videoRef.current;
+        if (!video || !stream) return;
+        try {
+            video.srcObject = stream;
+            void video.play();
+            lastFrameAtRef.current = Date.now();
+            setStalled(false);
+        } catch {
+            setRecordError('The camera could not be restarted. Please reload the page.');
+        }
+    }, [stream]);
 
     // The burned-in stamp always uses the real capture time; this just keeps the
     // on-screen preview overlay from showing a frozen clock.
@@ -59,9 +113,11 @@ export function CaptureStage({
      * shows exactly what will be saved. Held to 3/4 (landscape) until the stream
      * reports its size.
      *
-     * Applied as percentage padding rather than `aspect-ratio` deliberately: this app
-     * targets browsers older than that property, where an aspect-ratio box collapses to
-     * zero height and the preview disappears entirely.
+     * Applied with `aspect-ratio`. An earlier version used a zero-height box with
+     * percentage padding, meaning to support older browsers -- but the browser floor is
+     * already set by Tailwind (Safari 16.4 / Chrome 111), well above aspect-ratio's,
+     * and on a real Android handset the live camera inside that zero-height container
+     * stopped repainting: the picture froze while the stream kept running.
      */
     const [previewRatio, setPreviewRatio] = useState(3 / 4);
 
@@ -69,11 +125,16 @@ export function CaptureStage({
         const video = videoRef.current;
         if (!video || !stream) return;
         video.srcObject = stream;
+        // The autoplay attribute alone is not dependable for a camera stream on mobile
+        // browsers; without an explicit play() the element can sit on its first frame,
+        // which looks exactly like a frozen camera.
+        void video.play().catch(() => undefined);
 
         const onMeta = () => {
             if (video.videoWidth && video.videoHeight) {
                 setPreviewRatio(video.videoHeight / video.videoWidth);
             }
+            void video.play().catch(() => undefined);
         };
         video.addEventListener('loadedmetadata', onMeta);
         // Fires already-loaded when the stream is reattached.
@@ -316,14 +377,21 @@ export function CaptureStage({
             */}
             <div
                 className="relative w-full overflow-hidden rounded-xl border bg-slate-900"
-                style={{ height: 0, paddingBottom: `${(previewRatio * 100).toFixed(3)}%` }}
+                // aspect-ratio, not a zero-height + percentage-padding box. The padding
+                // technique was added for older browsers, but Tailwind v4 already puts
+                // the floor at Safari 16.4 / Chrome 111, where aspect-ratio has long
+                // been supported -- so it bought nothing, and a live camera inside a
+                // zero-height container stopped repainting on a real Android handset:
+                // the picture froze on screen while the stream kept running, so the rep
+                // could not see what they were aiming at.
+                style={{ aspectRatio: `1 / ${previewRatio.toFixed(4)}` }}
             >
                 <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
-                    className="absolute inset-0 h-full w-full object-contain"
+                    className="h-full w-full object-contain"
                 />
 
                 {mode === 'photo' && !streamNotReady && (
@@ -349,6 +417,13 @@ export function CaptureStage({
                     </div>
                 )}
 
+                {stalled && !streamNotReady && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/75 px-6 text-center text-sm font-semibold text-white">
+                        <RefreshCw className="h-6 w-6" aria-hidden="true" />
+                        Camera frozen — tap Restart camera below
+                    </div>
+                )}
+
                 {streamNotReady && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-900/70 text-sm font-medium text-white">
                         <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
@@ -358,6 +433,20 @@ export function CaptureStage({
             </div>
 
             <canvas ref={recordCanvasRef} className="hidden" />
+
+            {stalled && (
+                <Alert variant="warning" icon={<RefreshCw className="h-4 w-4" />}>
+                    <strong className="font-semibold">The camera picture has frozen.</strong>
+                    <p className="mt-0.5">
+                        Taking photos now would save the same stuck picture each time, so capture is
+                        paused. Tap below to restart it.
+                    </p>
+                    <Button variant="outline" className="mt-3 w-full" onClick={restartPreview}>
+                        <RefreshCw className="h-4 w-4" />
+                        Restart camera
+                    </Button>
+                </Alert>
+            )}
 
             {recordError && <Alert variant="destructive">{recordError}</Alert>}
 
@@ -372,7 +461,7 @@ export function CaptureStage({
                     </p>
                     <Button
                         size="capture"
-                        disabled={disabled || streamNotReady}
+                        disabled={disabled || streamNotReady || stalled}
                         loading={busy}
                         loadingText={`Uploading photo ${photosDone + 1}…`}
                         onClick={handleTakePhoto}
@@ -391,7 +480,7 @@ export function CaptureStage({
                     </p>
                     <Button
                         size="capture"
-                        disabled={disabled || streamNotReady}
+                        disabled={disabled || streamNotReady || stalled}
                         loading={busy}
                         loadingText="Uploading video…"
                         onClick={startRecording}
