@@ -1,10 +1,59 @@
 import { useEffect, useState } from 'react';
-import { Camera, Compass, RotateCw } from 'lucide-react';
+import { Camera, Compass, MapPin, RotateCw } from 'lucide-react';
 import { getAdminTaskMedia, reopenAdminTask } from '@/services/api';
+import { formatDistance, haversineDistanceMeters } from '@/utils/geo';
 import { TaskMediaItem } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Alert, EmptyState } from '@/components/ui/feedback';
 import { Button } from '@/components/ui/button';
+
+/**
+ * Widest gap between any two photo positions, below which the shots cannot really be
+ * "different angles around the property".
+ *
+ * Set against GPS noise rather than geometry: a phone standing still still reports
+ * positions a few metres apart, so anything under this is indistinguishable from not
+ * moving at all. Walking one side of a building comfortably exceeds it.
+ */
+const SAME_SPOT_METERS = 15;
+
+interface Coverage {
+    total: number;
+    spots: number;
+    spreadMeters: number;
+}
+
+/**
+ * Reports whether every photo was taken from effectively one place.
+ *
+ * Returns null when there is nothing to say -- too few photos to judge, or positions
+ * that were never recorded (older visits predate the column being populated, and an
+ * absent position is not evidence of anything).
+ */
+function summariseCoverage(photos: TaskMediaItem[]): Coverage | null {
+    const points = photos
+        .map((p) => ({ lat: p.capturedLatitude, lon: p.capturedLongitude }))
+        .filter((p): p is { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number');
+    if (points.length < 3 || points.length < photos.length) return null;
+
+    let spreadMeters = 0;
+    for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+            const d = haversineDistanceMeters(points[i].lat, points[i].lon, points[j].lat, points[j].lon);
+            if (d > spreadMeters) spreadMeters = d;
+        }
+    }
+    if (spreadMeters > SAME_SPOT_METERS) return null;
+
+    // Distinct standing positions, so the message can say "one spot" honestly rather
+    // than implying the rep never shifted at all when they moved a few metres.
+    const spots: { lat: number; lon: number }[] = [];
+    for (const p of points) {
+        if (!spots.some((s) => haversineDistanceMeters(s.lat, s.lon, p.lat, p.lon) <= 3)) spots.push(p);
+    }
+
+    return { total: photos.length, spots: spots.length, spreadMeters };
+}
 
 interface MediaGalleryProps {
     token: string;
@@ -63,6 +112,7 @@ export function MediaGallery({ token, taskId, onClose, onAuthExpired, onReopened
     const photos = media?.filter((m) => m.mediaType === 'photo') ?? [];
     const videos = media?.filter((m) => m.mediaType === 'video') ?? [];
     const noDirection = (media?.length ?? 0) > 0 && media!.every((m) => !m.directionCardinal);
+    const coverage = summariseCoverage(photos);
 
     return (
         <>
@@ -94,13 +144,41 @@ export function MediaGallery({ token, taskId, onClose, onAuthExpired, onReopened
                         </EmptyState>
                     )}
 
-                    {/* Direction is a client requirement, so its absence should be visible
-                        to whoever reviews the visit rather than buried in the captions. */}
+                    {/*
+                        Direction is a client requirement, so its absence should be visible
+                        to whoever reviews the visit rather than buried in the captions.
+
+                        This deliberately does not name a cause. It used to read "captured
+                        on a device with no compass reading", which is something the app
+                        cannot actually know -- it cannot tell a handset with no compass
+                        from a denied permission from a rep who chose to go on without one.
+                        On the first real visit it was none of those: the app was failing to
+                        read a compass that worked. Stating that guess as fact sent the
+                        client looking at his phone and cost a day.
+                    */}
                     {noDirection && (
                         <Alert variant="warning" icon={<Compass className="h-4 w-4" />}>
-                            <strong className="font-semibold">No direction data.</strong> This visit was
-                            captured on a device with no compass reading, so none of the media carries a
-                            direction stamp.
+                            <strong className="font-semibold">No direction stamped.</strong> None of this
+                            media carries a compass direction. The rep’s phone either could not provide
+                            one, or they were allowed to continue without it. It cannot be added now — if
+                            the direction matters here, send the visit back to be redone.
+                        </Alert>
+                    )}
+
+                    {/*
+                        Ten photos of the same patch of ground still count as ten photos, and
+                        the app cannot see what they show. Where the rep stood is recorded
+                        with every shot though, so "they never moved" is answerable -- and it
+                        is the question a reviewer is really asking when the thumbnails all
+                        look alike.
+                    */}
+                    {coverage && (
+                        <Alert variant="warning" icon={<MapPin className="h-4 w-4" />}>
+                            <strong className="font-semibold">Taken from {coverage.spots === 1 ? 'one spot' : `${coverage.spots} spots`}.</strong>{' '}
+                            All {coverage.total} photos were taken from within{' '}
+                            {formatDistance(coverage.spreadMeters)} of each other, so they are likely to
+                            show the same view. The brief asks for shots from different angles around the
+                            property.
                         </Alert>
                     )}
 

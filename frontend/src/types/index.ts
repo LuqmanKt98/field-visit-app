@@ -48,6 +48,9 @@ export interface TaskMediaItem {
     directionCardinal: string | null;
     capturedAt: string;
     fileSizeBytes?: number | null;
+    /** Where the rep stood. Already returned by the API; used to review coverage. */
+    capturedLatitude?: number | null;
+    capturedLongitude?: number | null;
 }
 
 /**
