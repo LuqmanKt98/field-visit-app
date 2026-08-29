@@ -6,10 +6,11 @@ import {
     getTaskById,
     getTaskMedia,
     listTasksForAdmin,
+    reopenTask,
     suggestTaskId,
     updateTaskLocation,
 } from '../services/taskService';
-import { createPresignedDownloadUrl } from '../services/s3Service';
+import { createPresignedDownloadUrl, deleteObject } from '../services/s3Service';
 import { isValidTaskId } from '../utils/taskId';
 import { config } from '../config';
 
@@ -135,6 +136,36 @@ adminRouter.patch('/tasks/:taskId/location', async (req, res) => {
         return;
     }
     res.json({ ok: true });
+});
+
+// POST /api/admin/tasks/:taskId/reopen
+// Sends a finished visit back out to be redone, clearing what was captured. Without
+// this, a visit that came back unusable was stuck: the rep's link showed the completion
+// screen and the only workaround was a duplicate Task ID.
+adminRouter.post('/tasks/:taskId/reopen', async (req, res) => {
+    if (!isValidTaskId(req.params.taskId)) {
+        res.status(400).json({ error: 'taskId must be numeric' });
+        return;
+    }
+
+    const clearedKeys = await reopenTask(req.params.taskId, req.admin!.username);
+    if (clearedKeys === null) {
+        res.status(404).json({ error: `No task found for ID ${req.params.taskId}` });
+        return;
+    }
+
+    // Best-effort. Upload keys are derived from the task and sequence number, so a file
+    // left behind here is overwritten by the redo anyway -- failing the whole request
+    // over tidy-up would leave the admin looking at an error for work that succeeded.
+    await Promise.all(
+        clearedKeys.map((key) =>
+            deleteObject(key).catch((err: unknown) => {
+                console.error(`Could not remove ${key} while reopening ${req.params.taskId}`, err);
+            }),
+        ),
+    );
+
+    res.json({ ok: true, clearedMediaCount: clearedKeys.length });
 });
 
 // GET /api/admin/tasks/:taskId/media

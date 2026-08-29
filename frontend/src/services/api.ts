@@ -192,6 +192,20 @@ export function createAdminTask(
 }
 
 /**
+ * Sends a finished visit back out to be redone, clearing what was captured.
+ * Destructive -- the caller must confirm with the user first.
+ */
+export function reopenAdminTask(
+    token: string,
+    taskId: string,
+): Promise<{ ok: true; clearedMediaCount: number }> {
+    return request(`/admin/tasks/${encodeURIComponent(taskId)}/reopen`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+}
+
+/**
  * Media for one task, as short-lived presigned URLs that can actually be displayed.
  * The bucket is private, so the stored S3 links return 403 on their own.
  */

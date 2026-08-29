@@ -1,21 +1,47 @@
 import { useEffect, useState } from 'react';
-import { Camera, Compass } from 'lucide-react';
-import { getAdminTaskMedia } from '@/services/api';
+import { Camera, Compass, RotateCw } from 'lucide-react';
+import { getAdminTaskMedia, reopenAdminTask } from '@/services/api';
 import { TaskMediaItem } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Alert, EmptyState } from '@/components/ui/feedback';
+import { Button } from '@/components/ui/button';
 
 interface MediaGalleryProps {
     token: string;
     taskId: string;
     onClose: () => void;
     onAuthExpired: () => void;
+    /** Lets the list behind this window pick up the task's new status. */
+    onReopened: () => void;
 }
 
-export function MediaGallery({ token, taskId, onClose, onAuthExpired }: MediaGalleryProps) {
+export function MediaGallery({ token, taskId, onClose, onAuthExpired, onReopened }: MediaGalleryProps) {
     const [media, setMedia] = useState<TaskMediaItem[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [zoomed, setZoomed] = useState<string | null>(null);
+    const [confirmingRedo, setConfirmingRedo] = useState(false);
+    const [redoing, setRedoing] = useState(false);
+    const [redone, setRedone] = useState(false);
+
+    async function handleRedo(): Promise<void> {
+        setRedoing(true);
+        setError(null);
+        try {
+            await reopenAdminTask(token, taskId);
+            setMedia([]);
+            setRedone(true);
+            setConfirmingRedo(false);
+            onReopened();
+        } catch (err: unknown) {
+            if ((err as { status?: number })?.status === 401) {
+                onAuthExpired();
+                return;
+            }
+            setError((err as Error).message);
+        } finally {
+            setRedoing(false);
+        }
+    }
 
     useEffect(() => {
         let cancelled = false;
@@ -136,6 +162,65 @@ export function MediaGallery({ token, taskId, onClose, onAuthExpired }: MediaGal
                             These links are temporary. If an image stops loading, close and reopen this
                             window.
                         </p>
+                    )}
+
+                    {/*
+                        A visit can come back unusable, and until this existed that was
+                        final: the rep's link showed the completion screen and the only
+                        way to get a redo was to invent a second Task ID -- which breaks
+                        the link back to the client's own records.
+                    */}
+                    {redone && (
+                        <Alert variant="success" className="mt-5">
+                            <strong className="font-semibold">Sent back to be redone.</strong> The same
+                            link now works again for Task #{taskId}. Ask the rep to return to the
+                            property and take the photos and video again.
+                        </Alert>
+                    )}
+
+                    {media && media.length > 0 && !redone && (
+                        <div className="mt-5 border-t pt-4">
+                            {confirmingRedo ? (
+                                <Alert variant="warning">
+                                    <strong className="font-semibold">
+                                        Delete these {media.length} files and send the visit back out?
+                                    </strong>
+                                    <p className="mt-0.5">
+                                        The photos and video above will be permanently removed and the
+                                        rep will have to return to the property. This cannot be undone.
+                                    </p>
+                                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                        <Button
+                                            variant="destructive"
+                                            className="sm:flex-1"
+                                            loading={redoing}
+                                            loadingText="Sending back…"
+                                            onClick={() => void handleRedo()}
+                                        >
+                                            Yes, delete and redo
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            className="sm:flex-1"
+                                            disabled={redoing}
+                                            onClick={() => setConfirmingRedo(false)}
+                                        >
+                                            Keep them
+                                        </Button>
+                                    </div>
+                                </Alert>
+                            ) : (
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <p className="text-xs text-muted-foreground">
+                                        Photos unusable? Send the visit back to be done again.
+                                    </p>
+                                    <Button variant="outline" onClick={() => setConfirmingRedo(true)}>
+                                        <RotateCw className="h-4 w-4" />
+                                        Redo this visit
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </DialogContent>
             </Dialog>

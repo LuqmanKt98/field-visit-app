@@ -363,6 +363,7 @@ export function TaskList({
                     taskId={viewingTaskId}
                     onClose={() => setViewingTaskId(null)}
                     onAuthExpired={onSessionExpired}
+                    onReopened={load}
                 />
             )}
         </div>

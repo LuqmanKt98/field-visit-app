@@ -95,6 +95,57 @@ export async function updateTaskLocation(
     return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Puts a finished visit back into the field, and reports which stored files were
+ * dropped so the caller can clear them from S3.
+ *
+ * A visit can come back unusable -- a camera that froze, a handset with no compass, a
+ * rep who photographed the wrong building -- and until now that was final. The task
+ * read Completed, the rep's link showed the completion screen, and the only way to get
+ * a redo was to invent a second Task ID. Task IDs come from the client's own systems,
+ * so a made-up one breaks the link back to their records and leaves two entries for
+ * one property.
+ *
+ * Clearing the media is not incidental: completion is counted from the rows in
+ * task_media, so a redo is impossible while they stand. That makes this deliberately
+ * destructive, and the caller is expected to have confirmed it with a human first.
+ */
+export async function reopenTask(taskId: string, updatedBy: string): Promise<string[] | null> {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Locked for the duration: a rep mid-upload on the same task would otherwise
+        // slip a row in between the delete and the status reset, leaving one orphaned
+        // photo counted against the fresh visit.
+        const { rowCount } = await client.query(
+            'SELECT 1 FROM tasks_field WHERE task_id = $1 FOR UPDATE',
+            [taskId],
+        );
+        if (!rowCount) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+
+        const { rows: cleared } = await client.query<{ s3_key: string }>(
+            'DELETE FROM task_media WHERE task_id = $1 RETURNING s3_key',
+            [taskId],
+        );
+        await client.query(
+            `UPDATE tasks_field
+             SET task_status = $2, cloud_url = NULL, updated_by = $3, updated_timestamp = now()
+             WHERE task_id = $1`,
+            [taskId, TaskStatus.NotStarted, updatedBy.slice(0, 35)],
+        );
+        await client.query('COMMIT');
+        return cleared.map((row) => row.s3_key);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 export async function getTaskMedia(taskId: string): Promise<TaskMediaRow[]> {
     const { rows } = await pool.query<TaskMediaRow>(
         `SELECT * FROM task_media WHERE task_id = $1 ORDER BY media_type, sequence_number`,
