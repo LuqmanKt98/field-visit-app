@@ -107,6 +107,76 @@ adminRouter.post('/tasks', async (req, res) => {
     });
 });
 
+/**
+ * Hosts this server is willing to follow. The endpoint below fetches a URL supplied by
+ * a signed-in user, which is a request-forgery hole unless it is fenced in: without
+ * this an admin account could aim it at an internal address and read what came back
+ * through the redirect chain. Every hop is re-checked, not just the first.
+ */
+const MAP_LINK_HOSTS = /^(?:maps\.app\.goo\.gl|goo\.gl|(?:www\.|maps\.)?google\.(?:com|co\.[a-z]{2}|[a-z]{2}))$/i;
+
+const mapLinkSchema = z.object({ url: z.string().url().max(2048) });
+
+// POST /api/admin/resolve-map-link
+// Expands a shortened Google Maps link to the URL it points at.
+//
+// Sharing a dropped pin from the Maps app gives a maps.app.goo.gl link, and that is
+// what someone standing on a vacant plot actually has to hand. The coordinates only
+// appear after a redirect, and a browser is not allowed to read one cross-origin, so
+// the expansion has to happen here. Only the final URL is returned -- never the page.
+adminRouter.post('/resolve-map-link', async (req, res) => {
+    const parsed = mapLinkSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ error: 'A link is required' });
+        return;
+    }
+
+    let current: URL;
+    try {
+        current = new URL(parsed.data.url);
+    } catch {
+        res.status(400).json({ error: 'That does not look like a link' });
+        return;
+    }
+
+    for (let hop = 0; hop < 6; hop++) {
+        if (current.protocol !== 'https:' || !MAP_LINK_HOSTS.test(current.hostname)) {
+            res.status(400).json({ error: 'Only Google Maps links can be opened here.' });
+            return;
+        }
+
+        let response: Response;
+        try {
+            response = await fetch(current.toString(), {
+                method: 'GET',
+                redirect: 'manual',
+                signal: AbortSignal.timeout(8000),
+                // Maps hands a plain client a consent page instead of the redirect.
+                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FieldVisit/1.0)' },
+            });
+        } catch {
+            res.status(502).json({ error: 'That link could not be opened. Paste the full link instead.' });
+            return;
+        }
+
+        const next = response.headers.get('location');
+        if (!next) {
+            // Chain finished. The long URL is whatever we last landed on, and the
+            // caller does the coordinate parsing -- it already handles every form.
+            res.json({ url: current.toString() });
+            return;
+        }
+        try {
+            current = new URL(next, current);
+        } catch {
+            res.status(502).json({ error: 'That link could not be followed.' });
+            return;
+        }
+    }
+
+    res.status(502).json({ error: 'That link redirected too many times.' });
+});
+
 const locationSchema = z.object({
     latitude: z.coerce.number().min(-90).max(90),
     longitude: z.coerce.number().min(-180).max(180),

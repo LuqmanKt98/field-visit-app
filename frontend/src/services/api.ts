@@ -192,6 +192,18 @@ export function createAdminTask(
 }
 
 /**
+ * Expands a shortened Google Maps link. The redirect is unreadable from the browser,
+ * so the server follows it and hands back the long URL for parsing here.
+ */
+export function resolveMapLink(token: string, url: string): Promise<{ url: string }> {
+    return request('/admin/resolve-map-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url }),
+    });
+}
+
+/**
  * Sends a finished visit back out to be redone, clearing what was captured.
  * Destructive -- the caller must confirm with the user first.
  */

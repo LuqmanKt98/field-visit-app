@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, MapPin, Search } from 'lucide-react';
+import { Link2, Loader2, MapPin, Search } from 'lucide-react';
 import { useGoogleMaps } from '@/hooks/useGoogleMaps';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/feedback';
+import { resolveMapLink } from '@/services/api';
+import { isShortMapLink, looksLikeLocationAttempt, parseLocationInput } from '@/utils/mapLink';
 
 interface LocationPickerProps {
+    token: string;
     address: string;
     value: { latitude: number; longitude: number } | null;
     onChange: (value: { latitude: number; longitude: number }) => void;
@@ -14,20 +19,27 @@ interface LocationPickerProps {
 const DEFAULT_CENTRE = { lat: 12.9716, lng: 77.5946 };
 
 /**
- * Picks the property's position without ever showing the user a coordinate.
+ * Picks the property's position, by whichever of three routes the office actually has.
  *
- * Two ways in, because either one alone can fail: searching the typed address, and
- * dragging the pin. Address lookup needs Google's Geocoding API to be enabled on the
- * account, which is a separate switch from the map itself -- so if the search fails the
- * user can still place the pin by eye, which only needs the map that is already loaded.
+ * Pasting a Google Maps link comes first, because most of the properties this is used
+ * for are vacant land: no building, no street number, nothing for an address search to
+ * find. What the person does have is a pin they dropped in the Maps app, and the link
+ * that Share produces. Typed coordinates go in the same box.
+ *
+ * Address search stays for the properties that do have an address, and dragging the pin
+ * stays as the last resort that always works -- it needs only the map, not the separate
+ * Geocoding API, which is a different switch on the Google account and can be off.
  */
-export function LocationPicker({ address, value, onChange }: LocationPickerProps) {
+export function LocationPicker({ token, address, value, onChange }: LocationPickerProps) {
     const { loaded, error } = useGoogleMaps();
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<google.maps.Map | null>(null);
     const markerRef = useRef<google.maps.Marker | null>(null);
     const [searching, setSearching] = useState(false);
     const [searchNote, setSearchNote] = useState<string | null>(null);
+    const [linkInput, setLinkInput] = useState('');
+    const [resolving, setResolving] = useState(false);
+    const [linkNote, setLinkNote] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
 
     const place = useCallback(
         (lat: number, lng: number, recentre: boolean) => {
@@ -50,7 +62,10 @@ export function LocationPicker({ address, value, onChange }: LocationPickerProps
         const map = new google.maps.Map(containerRef.current, {
             center: start,
             zoom: value ? 18 : 12,
-            mapTypeId: 'roadmap',
+            // Satellite by default: on vacant land a road map shows an empty rectangle,
+            // and the only way anyone can confirm the pin is on the right plot is by
+            // recognising the ground itself.
+            mapTypeId: 'hybrid',
             streetViewControl: false,
             fullscreenControl: false,
             mapTypeControl: true,
@@ -76,6 +91,60 @@ export function LocationPicker({ address, value, onChange }: LocationPickerProps
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loaded]);
 
+    async function useLink(): Promise<void> {
+        const input = linkInput.trim();
+        if (!input) return;
+        setLinkNote(null);
+
+        let parsed = parseLocationInput(input);
+
+        // A Share link from the Maps app hides its coordinates behind a redirect the
+        // browser may not read, so the server expands it first.
+        if (!parsed && isShortMapLink(input)) {
+            setResolving(true);
+            try {
+                const { url } = await resolveMapLink(token, input);
+                parsed = parseLocationInput(url);
+            } catch (err) {
+                setLinkNote({
+                    tone: 'bad',
+                    text:
+                        (err as Error)?.message ??
+                        'That short link could not be opened. Open it in Maps and copy the full link from the address bar.',
+                });
+                setResolving(false);
+                return;
+            }
+            setResolving(false);
+        }
+
+        if (!parsed) {
+            setLinkNote({
+                tone: 'bad',
+                text: looksLikeLocationAttempt(input)
+                    ? 'No location found in that. Paste a Google Maps link, or type coordinates like 12.835472, 80.066889.'
+                    : 'Paste a Google Maps link, or type coordinates like 12.835472, 80.066889.',
+            });
+            return;
+        }
+
+        place(parsed.latitude, parsed.longitude, true);
+        setLinkNote(
+            parsed.from === 'map-centre'
+                ? {
+                      // Worth saying out loud: this link carried no dropped pin, only
+                      // wherever the map was scrolled to, which can sit tens of metres
+                      // off the plot.
+                      tone: 'warn',
+                      text: 'That link had no dropped pin, so the map’s centre was used. Check the pin below and drag it onto the plot.',
+                  }
+                : {
+                      tone: 'ok',
+                      text: `Pin placed at ${parsed.latitude.toFixed(6)}, ${parsed.longitude.toFixed(6)}. Check it is on the right plot.`,
+                  },
+        );
+    }
+
     async function findAddress(): Promise<void> {
         if (!loaded || !address.trim()) return;
         setSearching(true);
@@ -84,14 +153,14 @@ export function LocationPicker({ address, value, onChange }: LocationPickerProps
             const geocoder = new google.maps.Geocoder();
             const { results } = await geocoder.geocode({ address });
             if (results.length === 0) {
-                setSearchNote('That address was not found. Move the pin to the property instead.');
+                setSearchNote('That address was not found. Paste a map link instead, or move the pin.');
                 return;
             }
             const loc = results[0].geometry.location;
             place(loc.lat(), loc.lng(), true);
             setSearchNote(`Found: ${results[0].formatted_address}. Check the pin and drag it if needed.`);
         } catch {
-            setSearchNote('Address lookup is unavailable. Move the pin to the property instead.');
+            setSearchNote('Address lookup is unavailable. Paste a map link instead, or move the pin.');
         } finally {
             setSearching(false);
         }
@@ -102,19 +171,66 @@ export function LocationPicker({ address, value, onChange }: LocationPickerProps
     }
 
     return (
-        <div className="space-y-2">
-            <div className="flex gap-2">
-                <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1"
-                    onClick={findAddress}
-                    disabled={!loaded || !address.trim() || searching}
-                >
-                    {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                    Find this address on the map
-                </Button>
+        <div className="space-y-3">
+            <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+                <Label htmlFor="mapLink" className="flex items-center gap-1.5">
+                    <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Google Maps link or coordinates
+                </Label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                        id="mapLink"
+                        value={linkInput}
+                        onChange={(e) => setLinkInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                // Inside a form, Enter here would submit a half-filled visit.
+                                e.preventDefault();
+                                void useLink();
+                            }
+                        }}
+                        placeholder="Paste a maps link, or 12.835472, 80.066889"
+                        className="flex-1"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void useLink()}
+                        disabled={!linkInput.trim() || resolving}
+                    >
+                        {resolving ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                        {resolving ? 'Opening…' : 'Place pin'}
+                    </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    Best for vacant land and anything with no street address. In Google Maps, long-press
+                    the plot, tap <strong>Share</strong>, then paste the link here.
+                </p>
+                {linkNote && (
+                    <p
+                        className={
+                            linkNote.tone === 'bad'
+                                ? 'text-xs font-medium text-destructive'
+                                : linkNote.tone === 'warn'
+                                  ? 'text-xs font-medium text-amber-700'
+                                  : 'text-xs font-medium text-emerald-700'
+                        }
+                    >
+                        {linkNote.text}
+                    </p>
+                )}
             </div>
+
+            <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => void findAddress()}
+                disabled={!loaded || !address.trim() || searching}
+            >
+                {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                Or find the address above on the map
+            </Button>
 
             <div className="relative overflow-hidden rounded-lg border">
                 <div ref={containerRef} className="h-64 w-full bg-muted" />
@@ -129,8 +245,8 @@ export function LocationPicker({ address, value, onChange }: LocationPickerProps
                 <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span>
                     {value
-                        ? 'Drag the pin, or tap the map, so it sits exactly on the property. The camera unlocks within 100 m of this pin.'
-                        : 'Search the address above, or tap the map to place the pin on the property.'}
+                        ? 'Drag the pin, or tap the map, so it sits exactly on the plot. The camera unlocks within 100 m of this pin.'
+                        : 'Paste a map link above, or tap the map to place the pin on the plot.'}
                 </span>
             </p>
 
