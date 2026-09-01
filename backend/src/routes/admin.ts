@@ -66,10 +66,42 @@ adminRouter.get('/tasks/new/suggested-id', async (_req, res) => {
     res.json({ taskId: await suggestTaskId() });
 });
 
+/**
+ * A latitude or longitude, from JSON that may have come from anywhere.
+ *
+ * Deliberately not `z.coerce.number()`: coercion runs `Number()` first, and
+ * `Number(null)`, `Number('')`, `Number([])` and `Number(false)` are all 0, so a body
+ * with null coordinates passed validation and created a visit on Null Island -- a
+ * geofence no representative on earth can stand inside, failing silently long after the
+ * office thought the visit was made. Numeric strings are still accepted, because those
+ * are a real thing to send; nothing else is.
+ */
+const coordinate = (limit: number) =>
+    z.preprocess(
+        (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+        z.number().finite().min(-limit).max(limit),
+    );
+
+/**
+ * Rejects (0, 0) wherever a position is accepted.
+ *
+ * The link parser on the office form already refuses it -- Null Island is never a real
+ * property -- and the API has to enforce its own rule rather than trusting the one
+ * client that happens to implement it.
+ */
+const notNullIsland = (v: { latitude: number; longitude: number }) =>
+    !(v.latitude === 0 && v.longitude === 0);
+const NULL_ISLAND_MESSAGE = {
+    message: 'A latitude and longitude of 0, 0 is not a real property',
+    path: ['latitude'],
+};
+
 const createTaskSchema = z.object({
     // Optional: real visits usually carry the client's own reference, so the field is
-    // pre-filled with a suggestion but can be overwritten with theirs.
-    taskId: z.string().regex(/^\d{1,19}$/).optional(),
+    // pre-filled with a suggestion but can be overwritten with theirs. Bounded by
+    // isValidTaskId rather than by digit count alone: TASK_ID is a BIGINT, and a
+    // 19-digit value above its ceiling reached the driver and surfaced as a 500.
+    taskId: z.string().refine(isValidTaskId, 'taskId must be a number Postgres can store').optional(),
     jobId: z.string().max(23).optional(),
     vendorTaskId: z.string().max(35).optional(),
     // Optional on purpose. Most of these properties are vacant land with no address of
@@ -79,12 +111,12 @@ const createTaskSchema = z.object({
     city: z.string().max(55).optional(),
     pinCode: z.string().max(15).optional(),
     district: z.string().max(55).optional(),
-    latitude: z.coerce.number().min(-90).max(90),
-    longitude: z.coerce.number().min(-180).max(180),
+    latitude: coordinate(90),
+    longitude: coordinate(180),
     agentFirstName: z.string().max(55).optional(),
     agentLastName: z.string().max(55).optional(),
     propertyManagerPhone: z.string().max(15).optional(),
-});
+}).refine(notNullIsland, NULL_ISLAND_MESSAGE);
 
 // POST /api/admin/tasks
 // Creates a field visit. Without this there is no way to get a visit into the system
@@ -194,10 +226,9 @@ adminRouter.post('/resolve-map-link', async (req, res) => {
     res.status(502).json({ error: 'That link redirected too many times.' });
 });
 
-const locationSchema = z.object({
-    latitude: z.coerce.number().min(-90).max(90),
-    longitude: z.coerce.number().min(-180).max(180),
-});
+const locationSchema = z
+    .object({ latitude: coordinate(90), longitude: coordinate(180) })
+    .refine(notNullIsland, NULL_ISLAND_MESSAGE);
 
 // PATCH /api/admin/tasks/:taskId/location
 // Lets an office user correct a pin that was dropped in the wrong place, without

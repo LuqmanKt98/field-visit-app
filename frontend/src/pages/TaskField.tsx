@@ -39,9 +39,19 @@ interface PendingCapture {
  */
 function describeAddress(task: TaskDetails): string {
     const base = task.address.fullAddress?.trim() ?? '';
+    // Matched against the comma-separated parts of the address rather than as a raw
+    // substring of it. A plain `includes` cannot tell a repeat from a coincidence, and
+    // dropped the town "Ram" out of "Rampur Road" -- taking away the one thing that told
+    // the representative which Rampur Road was meant.
+    const present = new Set(
+        base
+            .split(',')
+            .map((part) => part.trim().toLowerCase())
+            .filter(Boolean),
+    );
     const extras = [task.address.city, task.address.pinCode].filter(
         (part): part is string =>
-            Boolean(part?.trim()) && !base.toLowerCase().includes(part!.trim().toLowerCase()),
+            Boolean(part?.trim()) && !present.has(part!.trim().toLowerCase()),
     );
     return [base, ...extras].filter(Boolean).join(', ');
 }

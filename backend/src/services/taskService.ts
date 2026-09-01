@@ -1,4 +1,5 @@
 import { pool } from '../db/pool';
+import { buildFullAddress, shortenToFit } from '../utils/placeName';
 import { TaskFieldRow, TaskMediaRow, TaskStatus } from '../types';
 
 export async function getTaskById(taskId: string): Promise<TaskFieldRow | null> {
@@ -52,7 +53,10 @@ export async function createTask(input: CreateTaskInput): Promise<TaskFieldRow> 
     const streetAddress =
         input.streetAddress?.trim() ||
         `Land at ${input.latitude.toFixed(6)}, ${input.longitude.toFixed(6)}`;
-    const fullAddress = [streetAddress, input.city, input.pinCode].filter(Boolean).join(', ');
+    // Both columns are trimmed on comma boundaries rather than at a flat length: the
+    // full address is what the representative reads on arrival, and cutting it mid-word
+    // left "...Chengalpattu D" with the PIN code silently gone.
+    const fullAddress = buildFullAddress(streetAddress, input.city, input.pinCode, 100);
 
     const { rows } = await pool.query<TaskFieldRow>(
         `INSERT INTO tasks_field (
@@ -67,12 +71,12 @@ export async function createTask(input: CreateTaskInput): Promise<TaskFieldRow> 
             taskId,
             input.jobId ?? null,
             input.vendorTaskId ?? null,
-            fullAddress.slice(0, 100),
-            streetAddress.slice(0, 60),
+            fullAddress,
+            shortenToFit(streetAddress, 60),
             input.city?.slice(0, 55) ?? null,
             input.pinCode?.slice(0, 15) ?? null,
             input.district?.slice(0, 55) ?? null,
-            fullAddress.slice(0, 100),
+            fullAddress,
             String(input.latitude),
             String(input.longitude),
             input.agentFirstName?.slice(0, 55) ?? null,

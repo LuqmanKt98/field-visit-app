@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/feedback';
+import { config } from '@/config/config';
 import { resolveMapLink } from '@/services/api';
+import { formatDistance, haversineDistanceMeters } from '@/utils/geo';
 import { isShortMapLink, looksLikeLocationAttempt, parseLocationInput } from '@/utils/mapLink';
 
 interface LocationPickerProps {
@@ -36,10 +38,20 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
     const mapRef = useRef<google.maps.Map | null>(null);
     const markerRef = useRef<google.maps.Marker | null>(null);
     const [searching, setSearching] = useState(false);
-    const [searchNote, setSearchNote] = useState<string | null>(null);
     const [linkInput, setLinkInput] = useState('');
     const [resolving, setResolving] = useState(false);
-    const [linkNote, setLinkNote] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
+    // One note, not one per control.
+    //
+    // The link box and the address search each used to keep their own message, and both
+    // stayed on screen at once. Searching an address moves the pin, so the office was
+    // shown "Pin placed at 12.835472, 80.066889" in green directly above the result of a
+    // search that had since moved that pin 1.5 km -- and the green line, being the one
+    // that named coordinates, was the one believed. Whatever moved the pin last owns the
+    // only message there is.
+    const [note, setNote] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null);
+    // A found address that has NOT been applied, because a pin was already placed
+    // deliberately and this would have thrown it across town.
+    const [offered, setOffered] = useState<{ lat: number; lng: number; label: string } | null>(null);
 
     const place = useCallback(
         (lat: number, lng: number, recentre: boolean) => {
@@ -94,7 +106,8 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
     async function useLink(): Promise<void> {
         const input = linkInput.trim();
         if (!input) return;
-        setLinkNote(null);
+        setNote(null);
+        setOffered(null);
 
         let parsed = parseLocationInput(input);
 
@@ -106,7 +119,7 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                 const { url } = await resolveMapLink(token, input);
                 parsed = parseLocationInput(url);
             } catch (err) {
-                setLinkNote({
+                setNote({
                     tone: 'bad',
                     text:
                         (err as Error)?.message ??
@@ -119,7 +132,7 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
         }
 
         if (!parsed) {
-            setLinkNote({
+            setNote({
                 tone: 'bad',
                 text: looksLikeLocationAttempt(input)
                     ? 'No location found in that. Paste a Google Maps link, or type coordinates like 12.835472, 80.066889.'
@@ -130,7 +143,7 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
 
         place(parsed.latitude, parsed.longitude, true);
         const at = `${parsed.latitude.toFixed(6)}, ${parsed.longitude.toFixed(6)}`;
-        setLinkNote(
+        setNote(
             parsed.from === 'map-centre'
                 ? {
                       // Worth saying out loud: this link carried no dropped pin, only
@@ -155,25 +168,65 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
         );
     }
 
+    /**
+     * Searches the typed address and puts the pin on it.
+     *
+     * It will not quietly overrule a pin that is already down. Searching an address is a
+     * coarser way of finding a property than a dropped pin -- Google answers with the
+     * middle of whatever it recognises, which for the address auto-filled from a plot in
+     * Moolakazhani was 1.5 km from the plot itself. That used to happen in silence, on a
+     * screen still displaying the pin's original coordinates in green, which is how a
+     * representative ends up on the wrong side of a village with a camera that will not
+     * open. Beyond the geofence the find is offered rather than applied, so replacing a
+     * deliberate pin is always somebody's decision.
+     */
     async function findAddress(): Promise<void> {
         if (!loaded || !address.trim()) return;
         setSearching(true);
-        setSearchNote(null);
+        setNote(null);
+        setOffered(null);
         try {
             const geocoder = new google.maps.Geocoder();
             const { results } = await geocoder.geocode({ address });
             if (results.length === 0) {
-                setSearchNote('That address was not found. Paste a map link instead, or move the pin.');
+                setNote({ tone: 'bad', text: 'That address was not found. Paste a map link instead, or drag the pin.' });
                 return;
             }
             const loc = results[0].geometry.location;
+            const found = results[0].formatted_address;
+            const away = value
+                ? haversineDistanceMeters(value.latitude, value.longitude, loc.lat(), loc.lng())
+                : 0;
+
+            if (value && away > config.fieldVisit.cameraUnlockDistanceMeters) {
+                setOffered({ lat: loc.lat(), lng: loc.lng(), label: found });
+                setNote({
+                    tone: 'warn',
+                    text: `Found ${found}, but that is ${formatDistance(away)} from the pin already on the map. The pin has been left where it is — move it only if the address is the better one.`,
+                });
+                return;
+            }
+
             place(loc.lat(), loc.lng(), true);
-            setSearchNote(`Found: ${results[0].formatted_address}. Check the pin and drag it if needed.`);
+            setNote({
+                tone: 'ok',
+                text: `Pin placed on ${found} (${loc.lat().toFixed(6)}, ${loc.lng().toFixed(6)}). Check it is on the right plot.`,
+            });
         } catch {
-            setSearchNote('Address lookup is unavailable. Paste a map link instead, or move the pin.');
+            setNote({ tone: 'bad', text: 'Address lookup is unavailable. Paste a map link instead, or drag the pin.' });
         } finally {
             setSearching(false);
         }
+    }
+
+    function acceptOffered(): void {
+        if (!offered) return;
+        place(offered.lat, offered.lng, true);
+        setNote({
+            tone: 'ok',
+            text: `Pin moved to ${offered.label} (${offered.lat.toFixed(6)}, ${offered.lng.toFixed(6)}). Check it is on the right plot.`,
+        });
+        setOffered(null);
     }
 
     if (error) {
@@ -217,19 +270,6 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                     Best for vacant land and anything with no street address. In Google Maps, long-press
                     the plot, tap <strong>Share</strong>, then paste the link here.
                 </p>
-                {linkNote && (
-                    <p
-                        className={
-                            linkNote.tone === 'bad'
-                                ? 'text-xs font-medium text-destructive'
-                                : linkNote.tone === 'warn'
-                                  ? 'text-xs font-medium text-amber-700'
-                                  : 'text-xs font-medium text-emerald-700'
-                        }
-                    >
-                        {linkNote.text}
-                    </p>
-                )}
             </div>
 
             <Button
@@ -242,6 +282,33 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                 {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 Or find the address above on the map
             </Button>
+
+            {/* The one place anything is said about where the pin is, so a stale line
+                from one control can never sit contradicting a fresh one from another. */}
+            {note && (
+                <div
+                    className={
+                        note.tone === 'bad'
+                            ? 'text-xs font-medium text-destructive'
+                            : note.tone === 'warn'
+                              ? 'text-xs font-medium text-amber-700'
+                              : 'text-xs font-medium text-emerald-700'
+                    }
+                >
+                    <p>{note.text}</p>
+                    {offered && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={acceptOffered}
+                        >
+                            Move the pin to the address instead
+                        </Button>
+                    )}
+                </div>
+            )}
 
             <div className="relative overflow-hidden rounded-lg border">
                 <div ref={containerRef} className="h-64 w-full bg-muted" />
@@ -256,12 +323,10 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                 <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span>
                     {value
-                        ? 'Drag the pin, or tap the map, so it sits exactly on the plot. The camera unlocks within 100 m of this pin.'
+                        ? `Drag the pin, or tap the map, so it sits exactly on the plot. The camera unlocks within ${config.fieldVisit.cameraUnlockDistanceMeters} m of this pin.`
                         : 'Paste a map link above, or tap the map to place the pin on the plot.'}
                 </span>
             </p>
-
-            {searchNote && <p className="text-xs text-muted-foreground">{searchNote}</p>}
         </div>
     );
 }

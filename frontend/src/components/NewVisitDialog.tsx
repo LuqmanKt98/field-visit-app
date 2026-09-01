@@ -55,16 +55,19 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
     // Coordinates already looked up, so moving the pin re-fills but settling on one
     // does not send the same request again.
     const lastLookupRef = useRef<string | null>(null);
-    // Exactly what was last written into the town and PIN fields automatically.
+    // Which of the three fields a person has typed in.
     //
-    // Holding the values rather than a "have we filled yet" flag is what lets the pair
-    // follow the pin. With a one-shot flag, moving the pin to a plot in another town
-    // kept the first town and PIN against the new coordinates and saved them that way,
-    // silently mislabelling the record -- and those two fields are what makes a visit
-    // findable in the list later. Comparing against what we wrote also keeps the
-    // original promise intact: the moment either field differs from it, a person has
-    // typed there and it is never touched again.
-    const autoFilledRef = useRef<{ name: string; city: string; pinCode: string } | null>(null);
+    // Ownership was worked out by comparing each field against the last value written
+    // automatically. That misread two cases. Someone who typed the town the lookup would
+    // have chosen anyway -- the likeliest thing to type, since it is the right answer --
+    // was indistinguishable from the app's own writing, and moving the pin overwrote
+    // them. And someone who cleared a field to mean "this plot has no town" had it
+    // filled straight back in. What decides this is whether a human touched the box, so
+    // that is what is recorded, at the moment they touch it.
+    const touchedRef = useRef({ name: false, city: false, pinCode: false });
+    // Guards the submit against a second click landing before React has re-rendered the
+    // button as disabled: `saving` is state, and state is not applied synchronously.
+    const submittingRef = useRef(false);
 
     // Pre-fill a free Task ID so the field is never blank, while still allowing the
     // office to type their own reference over it.
@@ -91,14 +94,9 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
         if (lastLookupRef.current === pin) return;
         lastLookupRef.current = pin;
 
-        // Each field is judged on its own: blank, or still holding exactly what was
-        // filled in for the previous pin. Anything else was typed by a person, and
-        // their words outrank the lookup for good.
-        const filled = autoFilledRef.current;
-        const nameIsOurs = !streetAddress.trim() || streetAddress === filled?.name;
-        const cityIsOurs = !city.trim() || city === filled?.city;
-        const pinIsOurs = !pinCode.trim() || pinCode === filled?.pinCode;
-        if (!nameIsOurs && !cityIsOurs && !pinIsOurs) return;
+        // Each field is judged on its own. A person's words outrank the lookup for good.
+        const touched = touchedRef.current;
+        if (touched.name && touched.city && touched.pinCode) return;
 
         let cancelled = false;
         new google.maps.Geocoder()
@@ -117,19 +115,28 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                 // it is trimmed back to the last whole part instead.
                 const suggested = shortenPlaceName(results[0].formatted_address ?? '');
 
-                autoFilledRef.current = { name: suggested, city: locality, pinCode: postal };
-                if (nameIsOurs && suggested) setStreetAddress(suggested);
-                if (cityIsOurs) setCity(locality);
-                if (pinIsOurs) setPinCode(postal);
+                if (!touched.name && suggested) setStreetAddress(suggested);
+                if (!touched.city) setCity(locality);
+                if (!touched.pinCode) setPinCode(postal);
             })
             .catch(() => {
                 // Reverse lookup needs the Geocoding API switched on, which is a
                 // separate setting. Its absence must not block creating the visit.
+                // Forget the pin so nudging it is enough to try again.
+                lastLookupRef.current = null;
             });
         return () => {
             cancelled = true;
         };
-    }, [mapsLoaded, location, streetAddress, city, pinCode]);
+        // Deliberately not depending on the three fields it writes into.
+        //
+        // It did, and typing the property name while the lookup was still in flight ran
+        // this cleanup, cancelled the reply, and left the guard above pointing at a pin
+        // already marked as looked-up -- so the town and PIN code stayed empty for that
+        // pin forever, on the most ordinary sequence there is: place the pin, then name
+        // the plot. Only a new position should start or stop a lookup.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mapsLoaded, location]);
 
     const fullAddressForSearch = [streetAddress, city, pinCode].filter(Boolean).join(', ');
 
@@ -151,7 +158,8 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
 
     async function handleSubmit(event: FormEvent): Promise<void> {
         event.preventDefault();
-        if (!location) return;
+        if (!location || submittingRef.current) return;
+        submittingRef.current = true;
         setSaving(true);
         setError(null);
         try {
@@ -174,8 +182,15 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                 onSessionExpired();
                 return;
             }
-            setError(err instanceof ApiError ? err.message : 'The visit could not be created.');
+            setError(
+                err instanceof ApiError
+                    ? err.message
+                    : navigator.onLine === false
+                      ? 'You appear to be offline. The visit was not created — everything you entered is still here, so press Create visit again once you are back on the internet.'
+                      : 'The visit could not be created. Nothing has been lost — press Create visit to try again.',
+            );
         } finally {
+            submittingRef.current = false;
             setSaving(false);
         }
     }
@@ -242,7 +257,10 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                                     <Input
                                         id="streetAddress"
                                         value={streetAddress}
-                                        onChange={(e) => setStreetAddress(e.target.value)}
+                                        onChange={(e) => {
+                                            touchedRef.current.name = true;
+                                            setStreetAddress(e.target.value);
+                                        }}
                                         placeholder="42 Brigade Road — or: Vacant plot, Survey No. 42"
                                         autoFocus
                                     />
@@ -254,11 +272,28 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="city">Town or city</Label>
-                                    <Input id="city" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Bengaluru" />
+                                    <Input
+                                        id="city"
+                                        value={city}
+                                        onChange={(e) => {
+                                            touchedRef.current.city = true;
+                                            setCity(e.target.value);
+                                        }}
+                                        placeholder="Bengaluru"
+                                    />
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="pinCode">PIN code</Label>
-                                    <Input id="pinCode" value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="560025" inputMode="numeric" />
+                                    <Input
+                                        id="pinCode"
+                                        value={pinCode}
+                                        onChange={(e) => {
+                                            touchedRef.current.pinCode = true;
+                                            setPinCode(e.target.value);
+                                        }}
+                                        placeholder="560025"
+                                        inputMode="numeric"
+                                    />
                                 </div>
                             </div>
 
