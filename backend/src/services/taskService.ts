@@ -13,7 +13,7 @@ export interface CreateTaskInput {
     taskId?: string;
     jobId?: string;
     vendorTaskId?: string;
-    streetAddress: string;
+    streetAddress?: string;
     city?: string;
     pinCode?: string;
     district?: string;
@@ -47,7 +47,12 @@ export async function suggestTaskId(): Promise<string> {
 export async function createTask(input: CreateTaskInput): Promise<TaskFieldRow> {
     const taskId = input.taskId ?? (await suggestTaskId());
 
-    const fullAddress = [input.streetAddress, input.city, input.pinCode].filter(Boolean).join(', ');
+    // Land with no address still needs something a person can recognise in the list,
+    // so an unnamed plot is named after where it is.
+    const streetAddress =
+        input.streetAddress?.trim() ||
+        `Land at ${input.latitude.toFixed(6)}, ${input.longitude.toFixed(6)}`;
+    const fullAddress = [streetAddress, input.city, input.pinCode].filter(Boolean).join(', ');
 
     const { rows } = await pool.query<TaskFieldRow>(
         `INSERT INTO tasks_field (
@@ -63,7 +68,7 @@ export async function createTask(input: CreateTaskInput): Promise<TaskFieldRow> 
             input.jobId ?? null,
             input.vendorTaskId ?? null,
             fullAddress.slice(0, 100),
-            input.streetAddress.slice(0, 60),
+            streetAddress.slice(0, 60),
             input.city?.slice(0, 55) ?? null,
             input.pinCode?.slice(0, 15) ?? null,
             input.district?.slice(0, 55) ?? null,

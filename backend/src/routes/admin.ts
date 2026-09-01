@@ -72,7 +72,10 @@ const createTaskSchema = z.object({
     taskId: z.string().regex(/^\d{1,19}$/).optional(),
     jobId: z.string().max(23).optional(),
     vendorTaskId: z.string().max(35).optional(),
-    streetAddress: z.string().min(3).max(60),
+    // Optional on purpose. Most of these properties are vacant land with no address of
+    // any kind, so the position is the identity and a name is a convenience. When it is
+    // missing the service names the visit after its coordinates.
+    streetAddress: z.string().max(60).optional(),
     city: z.string().max(55).optional(),
     pinCode: z.string().max(15).optional(),
     district: z.string().max(55).optional(),

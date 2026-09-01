@@ -16,6 +16,30 @@ interface NewVisitDialogProps {
     onSessionExpired: () => void;
 }
 
+/** Longest name the prop_st_addr column accepts. */
+const NAME_MAX = 60;
+
+/**
+ * Trims a full address back to the leading parts that fit, on comma boundaries.
+ *
+ * The country and state at the tail are the least useful parts of the name anyway, so
+ * dropping whole ones reads far better than cutting the string at exactly 60.
+ */
+function shortenPlaceName(formatted: string): string {
+    const text = formatted.trim();
+    if (text.length <= NAME_MAX) return text;
+
+    const parts = text.split(',').map((p) => p.trim());
+    let out = '';
+    for (const part of parts) {
+        const next = out ? `${out}, ${part}` : part;
+        if (next.length > NAME_MAX) break;
+        out = next;
+    }
+    // A single part longer than the column is the only case left to cut by length.
+    return out || text.slice(0, NAME_MAX).trimEnd();
+}
+
 export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: NewVisitDialogProps) {
     const [taskId, setTaskId] = useState('');
     const [streetAddress, setStreetAddress] = useState('');
@@ -28,6 +52,9 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
     const [createdLink, setCreatedLink] = useState<{ taskId: string; url: string } | null>(null);
     const [copied, setCopied] = useState(false);
     const { loaded: mapsLoaded } = useGoogleMaps();
+    // Coordinates already looked up, so moving the pin re-fills but settling on one
+    // does not send the same request again.
+    const lastLookupRef = useRef<string | null>(null);
     // Exactly what was last written into the town and PIN fields automatically.
     //
     // Holding the values rather than a "have we filled yet" flag is what lets the pair
@@ -37,7 +64,7 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
     // findable in the list later. Comparing against what we wrote also keeps the
     // original promise intact: the moment either field differs from it, a person has
     // typed there and it is never touched again.
-    const autoFilledRef = useRef<{ city: string; pinCode: string } | null>(null);
+    const autoFilledRef = useRef<{ name: string; city: string; pinCode: string } | null>(null);
 
     // Pre-fill a free Task ID so the field is never blank, while still allowing the
     // office to type their own reference over it.
@@ -58,13 +85,20 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
     useEffect(() => {
         if (!mapsLoaded || !location) return;
 
-        // Blank, or still holding exactly what was filled in for the previous pin.
-        // Anything else means someone typed, and their text outranks the lookup.
+        // Same pin as last time, so there is nothing new to look up. Without this the
+        // effect re-runs on its own writes and asks Google the same question twice.
+        const pin = `${location.latitude},${location.longitude}`;
+        if (lastLookupRef.current === pin) return;
+        lastLookupRef.current = pin;
+
+        // Each field is judged on its own: blank, or still holding exactly what was
+        // filled in for the previous pin. Anything else was typed by a person, and
+        // their words outrank the lookup for good.
         const filled = autoFilledRef.current;
-        const ours =
-            (!city.trim() && !pinCode.trim()) ||
-            (filled !== null && city === filled.city && pinCode === filled.pinCode);
-        if (!ours) return;
+        const nameIsOurs = !streetAddress.trim() || streetAddress === filled?.name;
+        const cityIsOurs = !city.trim() || city === filled?.city;
+        const pinIsOurs = !pinCode.trim() || pinCode === filled?.pinCode;
+        if (!nameIsOurs && !cityIsOurs && !pinIsOurs) return;
 
         let cancelled = false;
         new google.maps.Geocoder()
@@ -77,10 +111,16 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                 const locality =
                     pick('locality') || pick('sublocality') || pick('administrative_area_level_2');
                 const postal = pick('postal_code');
-                if (!locality && !postal) return;
-                autoFilledRef.current = { city: locality, pinCode: postal };
-                setCity(locality);
-                setPinCode(postal);
+                // Whatever Google calls this spot, which for bare land is usually the
+                // area and a plus code rather than a street. The column holds 60, and a
+                // hard slice cut a real address mid-word ("...Nandivaram-Guduvanch"), so
+                // it is trimmed back to the last whole part instead.
+                const suggested = shortenPlaceName(results[0].formatted_address ?? '');
+
+                autoFilledRef.current = { name: suggested, city: locality, pinCode: postal };
+                if (nameIsOurs && suggested) setStreetAddress(suggested);
+                if (cityIsOurs) setCity(locality);
+                if (pinIsOurs) setPinCode(postal);
             })
             .catch(() => {
                 // Reverse lookup needs the Geocoding API switched on, which is a
@@ -89,10 +129,25 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
         return () => {
             cancelled = true;
         };
-    }, [mapsLoaded, location, city, pinCode]);
+    }, [mapsLoaded, location, streetAddress, city, pinCode]);
 
     const fullAddressForSearch = [streetAddress, city, pinCode].filter(Boolean).join(', ');
-    const canSave = streetAddress.trim().length >= 3 && location !== null && !saving;
+
+    /**
+     * What the visit is called when nobody typed anything.
+     *
+     * The whole point of this screen is land with no address, so a name cannot be a
+     * condition of saving -- requiring one is what left the button dead after a pin had
+     * been placed perfectly well. Falling back to the position means the record is
+     * still identifiable, and the office can rename it later.
+     */
+    const fallbackName = location
+        ? `Land at ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
+        : '';
+
+    // The pin is the only thing genuinely required: without it there is nothing for
+    // the rep to walk to and nothing to unlock the camera against.
+    const canSave = location !== null && !saving;
 
     async function handleSubmit(event: FormEvent): Promise<void> {
         event.preventDefault();
@@ -102,7 +157,7 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
         try {
             const created = await createAdminTask(token, {
                 taskId: taskId.trim() || undefined,
-                streetAddress: streetAddress.trim(),
+                streetAddress: streetAddress.trim() || fallbackName,
                 city: city.trim() || undefined,
                 pinCode: pinCode.trim() || undefined,
                 agentFirstName: agentFirstName.trim() || undefined,
@@ -183,7 +238,7 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <div className="space-y-2 sm:col-span-2">
-                                    <Label htmlFor="streetAddress">Property name or address</Label>
+                                    <Label htmlFor="streetAddress">Property name or address (optional)</Label>
                                     <Input
                                         id="streetAddress"
                                         value={streetAddress}
@@ -192,8 +247,9 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                                         autoFocus
                                     />
                                     <p className="text-xs text-muted-foreground">
-                                        No street address? Describe the plot instead — this is what the
-                                        representative sees at the top of their screen.
+                                        This is what the representative sees at the top of their screen.
+                                        Leave it blank for vacant land and it fills itself in from the
+                                        pin, or describe the plot in your own words.
                                     </p>
                                 </div>
                                 <div className="space-y-2">
@@ -229,10 +285,16 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
 
                             {error && <Alert variant="destructive">{error}</Alert>}
 
-                            {!location && (
-                                <p className="text-sm text-muted-foreground">
-                                    Paste a map link or tap the map to place the pin before saving.
-                                </p>
+                            {/* A greyed-out button with no reason beside it is a dead end.
+                                Whatever is still missing has to be named here. */}
+                            {!canSave && !saving && (
+                                <Alert variant="warning">
+                                    <strong className="font-semibold">Place the pin first.</strong>
+                                    <p className="mt-0.5">
+                                        Paste a Google Maps link above and press <em>Place pin</em>, or tap
+                                        the map, then <em>Create visit</em> will turn on.
+                                    </p>
+                                </Alert>
                             )}
 
                             <div className="flex justify-end gap-2 pt-1">
