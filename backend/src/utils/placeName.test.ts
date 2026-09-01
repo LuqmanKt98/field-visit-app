@@ -86,6 +86,20 @@ describe('buildFullAddress', () => {
         expect(out.length).toBeLessThanOrEqual(100);
     });
 
+    it('does not repeat a town the name already ends with', () => {
+        // The name is filled in from the pin and usually ends with the locality, so
+        // this is the ordinary vacant-land case, not an edge one.
+        expect(
+            buildFullAddress('139, Vishnu Priya Avenue, Moolakazhani', 'Moolakazhani', '603202', 100),
+        ).toBe('139, Vishnu Priya Avenue, Moolakazhani, 603202');
+    });
+
+    it('still adds a town that is only a substring of the name', () => {
+        expect(buildFullAddress('Rampur Road', 'Ram', '603202', 100)).toBe(
+            'Rampur Road, Ram, 603202',
+        );
+    });
+
     it('works with no town or PIN code at all', () => {
         expect(buildFullAddress('Land at 12.835472, 80.066889', undefined, undefined, 100)).toBe(
             'Land at 12.835472, 80.066889',

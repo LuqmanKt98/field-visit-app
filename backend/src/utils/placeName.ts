@@ -44,6 +44,13 @@ export function shortenToFit(text: string, max: number): string {
  * They are short, and they are what makes a visit findable, so the property name gives
  * up room to them rather than the other way round -- joining all three and cutting the
  * result at 100 dropped the PIN code entirely and left a dangling comma behind it.
+ *
+ * Neither is repeated if the name already carries it. A name filled in from the pin
+ * usually ends with the locality, so joining the town on again read back to the
+ * representative as "139, Vishnu Priya Avenue, Moolakazhani, Moolakazhani, 603202" --
+ * on every vacant plot, which is most of them. Matched on whole comma-separated parts,
+ * so a town that is merely a substring of a street ("Ram" inside "Rampur Road") is
+ * still added.
  */
 export function buildFullAddress(
     streetAddress: string,
@@ -51,7 +58,16 @@ export function buildFullAddress(
     pinCode: string | undefined,
     max: number,
 ): string {
-    const tail = [city, pinCode].map((p) => p?.trim()).filter(Boolean).join(', ');
+    const alreadyNamed = new Set(
+        streetAddress
+            .split(',')
+            .map((p) => p.trim().toLowerCase())
+            .filter(Boolean),
+    );
+    const tail = [city, pinCode]
+        .map((p) => p?.trim())
+        .filter((p): p is string => Boolean(p) && !alreadyNamed.has(p!.toLowerCase()))
+        .join(', ');
     const room = tail ? max - tail.length - 2 : max;
     const head = shortenToFit(streetAddress, room);
     return shortenToFit([head, tail].filter(Boolean).join(', '), max);
