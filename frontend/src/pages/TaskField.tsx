@@ -28,6 +28,24 @@ interface PendingCapture {
     capturedAt: string;
 }
 
+/**
+ * The one line of address the rep reads on arrival.
+ *
+ * `prop_full_addr` is a full address and already ends with the town and PIN code for
+ * anything created through the office form, so appending them again read back as
+ * "Vacant plot, Survey No. 42, Moolakazhani, 603202, Moolakazhani, 603202". Older rows
+ * imported from the client's own system hold only a street line, and those still need
+ * the two parts added -- so each is appended only when it is not there already.
+ */
+function describeAddress(task: TaskDetails): string {
+    const base = task.address.fullAddress?.trim() ?? '';
+    const extras = [task.address.city, task.address.pinCode].filter(
+        (part): part is string =>
+            Boolean(part?.trim()) && !base.toLowerCase().includes(part!.trim().toLowerCase()),
+    );
+    return [base, ...extras].filter(Boolean).join(', ');
+}
+
 export function TaskField() {
     const { taskId = '' } = useParams();
     const [task, setTask] = useState<TaskDetails | null>(null);
@@ -215,9 +233,7 @@ export function TaskField() {
                     <div className="min-w-0">
                         <h1 className="text-lg font-bold tracking-tight">Task #{task.taskId}</h1>
                         <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">
-                            {[task.address.fullAddress, task.address.city, task.address.pinCode]
-                                .filter(Boolean)
-                                .join(', ')}
+                            {describeAddress(task)}
                         </p>
                     </div>
                     <Badge variant={started ? 'default' : 'neutral'}>
