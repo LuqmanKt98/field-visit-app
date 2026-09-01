@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAdminAuth } from '../middleware/adminAuth';
+import { requireAdminAuth, requirePasswordChanged } from '../middleware/adminAuth';
 import {
     createTask,
     getTaskById,
@@ -16,6 +16,9 @@ import { config } from '../config';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdminAuth);
+// A starting password opens nothing but the change-password form, which lives on the
+// auth router and is deliberately not behind this.
+adminRouter.use(requirePasswordChanged);
 
 const listQuerySchema = z.object({
     search: z.string().optional(),
@@ -139,9 +142,20 @@ adminRouter.post('/resolve-map-link', async (req, res) => {
         return;
     }
 
+    // One budget for the whole chain, not per hop. Six hops at eight seconds each could
+    // reach 48 s, which outlives the serverless function it runs in -- the caller would
+    // get a platform timeout rather than the plain message below.
+    const deadline = Date.now() + 10_000;
+
     for (let hop = 0; hop < 6; hop++) {
         if (current.protocol !== 'https:' || !MAP_LINK_HOSTS.test(current.hostname)) {
             res.status(400).json({ error: 'Only Google Maps links can be opened here.' });
+            return;
+        }
+
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            res.status(504).json({ error: 'That link took too long to open. Paste the full link instead.' });
             return;
         }
 
@@ -150,7 +164,7 @@ adminRouter.post('/resolve-map-link', async (req, res) => {
             response = await fetch(current.toString(), {
                 method: 'GET',
                 redirect: 'manual',
-                signal: AbortSignal.timeout(8000),
+                signal: AbortSignal.timeout(remaining),
                 // Maps hands a plain client a consent page instead of the redirect.
                 headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FieldVisit/1.0)' },
             });

@@ -28,8 +28,16 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
     const [createdLink, setCreatedLink] = useState<{ taskId: string; url: string } | null>(null);
     const [copied, setCopied] = useState(false);
     const { loaded: mapsLoaded } = useGoogleMaps();
-    // Only ever fills blanks, and only once, so it cannot overwrite something typed.
-    const autoFilledRef = useRef(false);
+    // Exactly what was last written into the town and PIN fields automatically.
+    //
+    // Holding the values rather than a "have we filled yet" flag is what lets the pair
+    // follow the pin. With a one-shot flag, moving the pin to a plot in another town
+    // kept the first town and PIN against the new coordinates and saved them that way,
+    // silently mislabelling the record -- and those two fields are what makes a visit
+    // findable in the list later. Comparing against what we wrote also keeps the
+    // original promise intact: the moment either field differs from it, a person has
+    // typed there and it is never touched again.
+    const autoFilledRef = useRef<{ city: string; pinCode: string } | null>(null);
 
     // Pre-fill a free Task ID so the field is never blank, while still allowing the
     // office to type their own reference over it.
@@ -48,8 +56,15 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
      * which is exactly the case here.
      */
     useEffect(() => {
-        if (!mapsLoaded || !location || autoFilledRef.current) return;
-        if (city.trim() || pinCode.trim()) return;
+        if (!mapsLoaded || !location) return;
+
+        // Blank, or still holding exactly what was filled in for the previous pin.
+        // Anything else means someone typed, and their text outranks the lookup.
+        const filled = autoFilledRef.current;
+        const ours =
+            (!city.trim() && !pinCode.trim()) ||
+            (filled !== null && city === filled.city && pinCode === filled.pinCode);
+        if (!ours) return;
 
         let cancelled = false;
         new google.maps.Geocoder()
@@ -62,9 +77,10 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                 const locality =
                     pick('locality') || pick('sublocality') || pick('administrative_area_level_2');
                 const postal = pick('postal_code');
-                if (locality || postal) autoFilledRef.current = true;
-                if (locality) setCity(locality);
-                if (postal) setPinCode(postal);
+                if (!locality && !postal) return;
+                autoFilledRef.current = { city: locality, pinCode: postal };
+                setCity(locality);
+                setPinCode(postal);
             })
             .catch(() => {
                 // Reverse lookup needs the Geocoding API switched on, which is a

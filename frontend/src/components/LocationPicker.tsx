@@ -129,6 +129,7 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
         }
 
         place(parsed.latitude, parsed.longitude, true);
+        const at = `${parsed.latitude.toFixed(6)}, ${parsed.longitude.toFixed(6)}`;
         setLinkNote(
             parsed.from === 'map-centre'
                 ? {
@@ -138,10 +139,19 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                       tone: 'warn',
                       text: 'That link had no dropped pin, so the map’s centre was used. Check the pin below and drag it onto the plot.',
                   }
-                : {
-                      tone: 'ok',
-                      text: `Pin placed at ${parsed.latitude.toFixed(6)}, ${parsed.longitude.toFixed(6)}. Check it is on the right plot.`,
-                  },
+                : parsed.from === 'route-end'
+                  ? {
+                        // A directions link holds a pin per waypoint. The destination is
+                        // the reasonable guess, but it is only a guess, and saying so
+                        // costs one sentence against a rep sent to the wrong end of a
+                        // journey.
+                        tone: 'warn',
+                        text: `That is a directions link, so the destination was used (${at}). Check the pin is on the plot, not the starting point.`,
+                    }
+                  : {
+                        tone: 'ok',
+                        text: `Pin placed at ${at}. Check it is on the right plot.`,
+                    },
         );
     }
 
@@ -190,6 +200,7 @@ export function LocationPicker({ token, address, value, onChange }: LocationPick
                             }
                         }}
                         placeholder="Paste a maps link, or 12.835472, 80.066889"
+                        maxLength={2048}
                         className="flex-1"
                     />
                     <Button
