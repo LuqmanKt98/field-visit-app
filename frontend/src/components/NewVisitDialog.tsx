@@ -98,6 +98,18 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
         const touched = touchedRef.current;
         if (touched.name && touched.city && touched.pinCode) return;
 
+        // Anything the previous pin filled in describes the previous pin, so it is wrong
+        // the instant the pin moves. Clearing before asking rather than overwriting after
+        // matters twice over: if this lookup fails or finds nothing, the boxes are empty
+        // instead of quietly holding another plot's town and PIN code all the way into
+        // the saved record; and on screen the pair visibly empties and refills with the
+        // pin, which is what tells the office they come from the pin at all. Prabhu read
+        // them as the last visit's values left behind, and nothing on screen said
+        // otherwise.
+        if (!touched.name) setStreetAddress('');
+        if (!touched.city) setCity('');
+        if (!touched.pinCode) setPinCode('');
+
         let cancelled = false;
         new google.maps.Geocoder()
             .geocode({ location: { lat: location.latitude, lng: location.longitude } })
@@ -295,6 +307,14 @@ export function NewVisitDialog({ token, onClose, onCreated, onSessionExpired }: 
                                         inputMode="numeric"
                                     />
                                 </div>
+                                {/* Where these two came from, said out loud. Filled in
+                                    silently they look like the last visit's values still
+                                    sitting there, which is exactly how they were read. */}
+                                <p className="text-xs text-muted-foreground sm:col-span-2">
+                                    These two fill themselves in from the pin, and follow it if you
+                                    move it. Type over them, or clear them, and they stay as you left
+                                    them.
+                                </p>
                             </div>
 
                             <LocationPicker
