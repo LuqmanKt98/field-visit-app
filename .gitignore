@@ -4,3 +4,6 @@ dist/
 .env.local
 *.log
 .playwright-mcp/
+
+# Delivery bundle, rebuilt from the tracked source on demand
+Field-Visit-App-Delivery.zip
