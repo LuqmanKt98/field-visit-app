@@ -173,6 +173,22 @@ export function TaskField() {
         [taskId, geolocation.latitude, geolocation.longitude, task?.maxPhotoBytes, task?.maxVideoBytes],
     );
 
+    /**
+     * Gives up on a capture that will not go through, so the rep can shoot a fresh one
+     * instead of being stuck.
+     *
+     * The client hit this directly: an upload that fails for a reason retrying cannot
+     * fix -- a bad shot, or (as it turned out here) a misconfigured server -- left the
+     * shutter permanently disabled with Retry as the only button, and the only way out
+     * was reloading the whole page. Discarding clears the stuck capture without
+     * touching photosCaptured, so the next shot claims the same sequence number this
+     * one never filled.
+     */
+    function discardPending(): void {
+        setPending(null);
+        setUploadError(null);
+    }
+
     function handlePhotoCaptured(blob: Blob, contentType: 'image/jpeg'): void {
         void send({
             blob,
@@ -323,6 +339,18 @@ export function TaskField() {
                                     Your {pending.mediaType} is saved on this phone — you will not need to
                                     take it again.
                                 </p>
+                                {/* Retry alone was a dead end when the failure wasn't going to
+                                    clear itself -- the shutter stayed disabled with no way out
+                                    short of reloading the page. This is the way out. */}
+                                <button
+                                    type="button"
+                                    className="mt-2 w-full text-center text-xs font-medium underline underline-offset-2"
+                                    disabled={uploading}
+                                    onClick={discardPending}
+                                >
+                                    Discard and {pending.mediaType === 'video' ? 'record' : 'take'} a new one
+                                    instead
+                                </button>
                             </>
                         )}
                     </Alert>
