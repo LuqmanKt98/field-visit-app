@@ -18,7 +18,7 @@ import { ApiError, getTask, getTaskMedia, uploadMedia, UploadContentType } from 
 import { formatDistance, haversineDistanceMeters } from '@/utils/geo';
 import { TaskDetails, TaskStatus } from '@/types';
 
-/** A capture that failed to upload, held so the rep can retry without reshooting. */
+/** A capture not yet confirmed uploaded, held so the rep can retry without reshooting. */
 interface PendingCapture {
     blob: Blob;
     contentType: UploadContentType;
@@ -26,6 +26,20 @@ interface PendingCapture {
     sequenceNumber: number;
     directionDegrees?: number;
     capturedAt: string;
+}
+
+/**
+ * A capture sitting in `pending`, plus why it's there.
+ *
+ * `pending` gets set for three different reasons and only one of them is a real
+ * failure: another upload still finishing, or location not ready yet, both just mean
+ * "wait a moment" -- the capture itself is fine and hasn't been tried yet. Only the
+ * third, an upload that was actually attempted and failed, means Discard belongs on
+ * screen; offering it for the other two would let a rep throw away a perfectly good
+ * photo because they mistook a queue for a failure.
+ */
+interface StalledCapture extends PendingCapture {
+    failed: boolean;
 }
 
 /**
@@ -65,7 +79,7 @@ export function TaskField() {
     const [taskComplete, setTaskComplete] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
-    const [pending, setPending] = useState<PendingCapture | null>(null);
+    const [pending, setPending] = useState<StalledCapture | null>(null);
     // Set only when the rep is told the compass is unavailable and chooses to go on
     // anyway, so "no direction" is always a deliberate decision rather than a surprise.
     const [acceptedNoCompass, setAcceptedNoCompass] = useState(false);
@@ -118,12 +132,14 @@ export function TaskField() {
             // Hold a capture that arrives mid-upload rather than discarding it, so the
             // rep can retry instead of losing the shot with no feedback at all.
             if (inFlightRef.current) {
-                setPending(capture);
+                // Not a failure -- this capture has not been tried yet, so there is
+                // nothing here worth discarding.
+                setPending({ ...capture, failed: false });
                 setUploadError('One upload is still finishing. Tap Retry to send this capture.');
                 return;
             }
             if (geolocation.latitude === null || geolocation.longitude === null) {
-                setPending(capture);
+                setPending({ ...capture, failed: false });
                 setUploadError('Waiting for your location. Tap Retry once your position is found.');
                 return;
             }
@@ -160,8 +176,10 @@ export function TaskField() {
                 if (result.taskComplete) setTaskComplete(true);
             } catch (err) {
                 // Hold on to the capture so "Retry" can resend the exact same file --
-                // otherwise a dropped connection would cost the rep a reshoot.
-                setPending(capture);
+                // otherwise a dropped connection would cost the rep a reshoot. This is
+                // the one branch that actually tried and failed, so it's the only one
+                // that offers Discard.
+                setPending({ ...capture, failed: true });
                 setUploadError(
                     err instanceof ApiError ? err.message : 'Upload failed. Check your signal and retry.',
                 );
@@ -339,18 +357,28 @@ export function TaskField() {
                                     Your {pending.mediaType} is saved on this phone — you will not need to
                                     take it again.
                                 </p>
-                                {/* Retry alone was a dead end when the failure wasn't going to
+                                {/*
+                                    Retry alone was a dead end when the failure wasn't going to
                                     clear itself -- the shutter stayed disabled with no way out
-                                    short of reloading the page. This is the way out. */}
-                                <button
-                                    type="button"
-                                    className="mt-2 w-full text-center text-xs font-medium underline underline-offset-2"
-                                    disabled={uploading}
-                                    onClick={discardPending}
-                                >
-                                    Discard and {pending.mediaType === 'video' ? 'record' : 'take'} a new one
-                                    instead
-                                </button>
+                                    short of reloading the page. This is the way out.
+
+                                    Shown only once an upload has genuinely been attempted and
+                                    failed (pending.failed). The other two reasons a capture sits
+                                    here -- another upload still finishing, location not ready --
+                                    are not failures, and offering Discard there would let a rep
+                                    throw away a perfectly good photo they mistook for a stuck one.
+                                */}
+                                {pending.failed && (
+                                    <Button
+                                        variant="ghost"
+                                        className="mt-2 w-full text-destructive hover:text-destructive"
+                                        disabled={uploading}
+                                        onClick={discardPending}
+                                    >
+                                        Discard and {pending.mediaType === 'video' ? 'record' : 'take'} a
+                                        new one instead
+                                    </Button>
+                                )}
                             </>
                         )}
                     </Alert>
